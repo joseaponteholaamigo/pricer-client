@@ -31,10 +31,12 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="min-h-screen bg-p-bg flex items-center justify-center">
+    <div className="min-h-screen bg-p-bg flex items-center justify-center px-4">
       <div className="glass-panel p-10 w-full max-w-md">
         <div className="text-center mb-10">
-          <img src={`${import.meta.env.BASE_URL}logo.jpg`} alt="Prisier" className="h-12 mx-auto mb-3" />
+          <div className="inline-block bg-white border border-white/20 rounded-xl px-4 py-2 mb-3">
+            <img src={`${import.meta.env.BASE_URL}logo.jpg`} alt="Prisier" className="h-10 object-contain" />
+          </div>
           <p className="text-p-muted text-sm">Portal Cliente</p>
         </div>
 
