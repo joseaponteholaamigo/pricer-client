@@ -403,7 +403,7 @@ export const SEED_USERS = [
     email: 'consultor@prisier.com',
     password: '123456',
     nombreCompleto: 'Consultor Demo',
-    rol: 'consultor_pricer',
+    rol: 'consultor_prisier',
     tenantId: null as string | null,
     estado: 'activo',
   },

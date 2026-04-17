@@ -18,7 +18,7 @@ const queryClient = new QueryClient({
 function App() {
   return (
     <QueryClientProvider client={queryClient}>
-      <BrowserRouter basename="/pricer-client/">
+      <BrowserRouter basename="/prisier-client/">
         <AuthProvider>
           <Routes>
             <Route path="/login" element={<LoginPage />} />

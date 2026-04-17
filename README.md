@@ -49,4 +49,4 @@ Sirve la app con nginx en el puerto `3002`.
 
 - `cliente_comercial` — modulos consumo masivo (1-4)
 - `cliente_educacion` — modulos educacion (E1-E3)
-# pricer-client
+# prisier-client
