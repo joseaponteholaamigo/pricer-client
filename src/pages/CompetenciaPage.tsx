@@ -3,6 +3,10 @@ import { useQuery } from '@tanstack/react-query'
 import Plot from '../lib/plotly'
 import { TrendingUp, TrendingDown, Users, ArrowUpRight, ArrowDownRight } from 'lucide-react'
 import api from '../lib/api'
+import SeverityBadge from '../components/SeverityBadge'
+import Drawer from '../components/Drawer'
+import SearchInput from '../components/SearchInput'
+import { useTableSearch } from '../components/useTableSearch'
 import type { CompetitionKpis, BrandComparison, CompetitionDetailRow, ScatterPoint, BoxPlotSeries } from '../lib/types'
 
 type Tab = 'dashboard' | 'detalle' | 'por-marca'
@@ -12,35 +16,59 @@ export default function CompetenciaPage() {
   const [marca, setMarca] = useState('')
   const [categoria, setCategoria] = useState('')
   const [retailer, setRetailer] = useState('')
+  const [fechaDesde, setFechaDesde] = useState('')
+  const [fechaHasta, setFechaHasta] = useState('')
 
   const { data: filterOptions } = useQuery({
     queryKey: ['competition-filters'],
     queryFn: () => api.get<{ marcas: string[]; categorias: string[]; retailers: string[] }>('/competition/filters').then(r => r.data),
   })
 
-  const filters = `marca=${marca}&categoria=${categoria}&retailer=${retailer}`
+  const filters = `marca=${marca}&categoria=${categoria}&retailer=${retailer}&fechaDesde=${fechaDesde}&fechaHasta=${fechaHasta}`
 
   return (
     <div>
       {/* Filters row */}
-      <div className="flex items-center gap-4 mb-6">
-        <select value={marca} onChange={(e) => setMarca(e.target.value)} className="glass-select">
-          <option value="">Todas las marcas</option>
-          {filterOptions?.marcas.map(m => <option key={m} value={m}>{m}</option>)}
-        </select>
+      <div className="flex items-center gap-4 mb-6 flex-wrap">
         <select value={categoria} onChange={(e) => setCategoria(e.target.value)} className="glass-select">
           <option value="">Todas las categorías</option>
           {filterOptions?.categorias.map(c => <option key={c} value={c}>{c}</option>)}
+        </select>
+        <select value={marca} onChange={(e) => setMarca(e.target.value)} className="glass-select">
+          <option value="">Todas las marcas</option>
+          {filterOptions?.marcas.map(m => <option key={m} value={m}>{m}</option>)}
         </select>
         <select value={retailer} onChange={(e) => setRetailer(e.target.value)} className="glass-select">
           <option value="">Todos los retailers</option>
           {filterOptions?.retailers.map(r => <option key={r} value={r}>{r}</option>)}
         </select>
+        <input
+          type="date"
+          value={fechaDesde}
+          onChange={(e) => setFechaDesde(e.target.value)}
+          className="glass-select text-sm"
+          title="Desde"
+        />
+        <input
+          type="date"
+          value={fechaHasta}
+          onChange={(e) => setFechaHasta(e.target.value)}
+          className="glass-select text-sm"
+          title="Hasta"
+        />
+        {(fechaDesde || fechaHasta) && (
+          <button
+            onClick={() => { setFechaDesde(''); setFechaHasta('') }}
+            className="text-xs text-p-muted hover:text-white transition-colors"
+          >
+            Limpiar fechas
+          </button>
+        )}
       </div>
 
       {/* Sub-tabs */}
       <div className="flex gap-4 border-b border-p-border mb-6">
-        {([['dashboard', 'Dashboard'], ['detalle', 'Detalle por SKU'], ['por-marca', 'Comparación por Marca']] as const).map(([key, label]) => (
+        {([['dashboard', 'Dashboard'], ['detalle', 'Detalle por SKU'], ['por-marca', 'Tu precio vs. competidor por marca']] as const).map(([key, label]) => (
           <button
             key={key}
             onClick={() => setTab(key)}
@@ -89,35 +117,39 @@ function DashboardTab({ filters }: { filters: string }) {
       {/* KPI Cards */}
       <div className="grid grid-cols-4 gap-5">
         <KpiCard
-          label="Diferencial Promedio"
+          label="Diferencia de precio vs. competencia"
           value={`${diff >= 0 ? '+' : ''}${diff}%`}
           icon={diff >= 0 ? TrendingUp : TrendingDown}
           color={diff > 0 ? 'text-p-red' : 'text-p-lime'}
-          sub={diff > 0 ? 'Más caros que la competencia' : diff < 0 ? 'Más baratos que la competencia' : 'Alineados con la competencia'}
+          sub={diff > 0
+            ? `${Math.abs(diff)}% por encima del mercado`
+            : diff < 0
+              ? `${Math.abs(diff)}% por debajo del mercado`
+              : 'Alineados con el mercado'}
           subColor={diff > 0 ? 'text-p-red' : 'text-p-lime'}
         />
         <KpiCard
-          label="SKUs Comparados"
+          label="Productos con precio de referencia"
           value={String(kpis?.totalSkusComparados ?? 0)}
           icon={Users}
           color="text-p-blue"
-          sub={`${kpis?.totalCompetidores ?? 0} competidores`}
+          sub={`Comparado con ${kpis?.totalCompetidores ?? 0} competidores`}
           subColor="text-p-muted"
         />
         <KpiCard
-          label="SKU Más Caro vs Competencia"
+          label="Producto más caro que su competidor"
           value={kpis?.skuMasCaro?.nombre ?? '—'}
           icon={ArrowUpRight}
           color="text-p-red"
-          sub={kpis?.skuMasCaro ? `+${kpis.skuMasCaro.diferencialPct}% vs competidor` : undefined}
+          sub={kpis?.skuMasCaro ? `${kpis.skuMasCaro.diferencialPct}% sobre el precio de referencia` : undefined}
           subColor="text-p-red"
         />
         <KpiCard
-          label="SKU Más Barato vs Competencia"
+          label="Producto más barato que su competidor"
           value={kpis?.skuMasBarato?.nombre ?? '—'}
           icon={ArrowDownRight}
           color="text-p-lime"
-          sub={kpis?.skuMasBarato ? `${kpis.skuMasBarato.diferencialPct}% vs competidor` : undefined}
+          sub={kpis?.skuMasBarato ? `${Math.abs(kpis.skuMasBarato.diferencialPct)}% por debajo del precio de referencia` : undefined}
           subColor="text-p-lime"
         />
       </div>
@@ -156,9 +188,9 @@ function DashboardTab({ filters }: { filters: string }) {
         return (
           <div className="glass-panel p-6">
             <div className="flex items-center justify-between mb-4">
-              <h3 className="text-base font-semibold text-white">Dispersión de Precios: Cliente vs Competidores</h3>
+              <h3 className="text-base font-semibold text-white">Comparación de precios por producto</h3>
               {totalProducts > SCATTER_TOP && (
-                <span className="text-xs text-p-muted">Top {SCATTER_TOP} de {totalProducts} productos con mayor diferencial</span>
+                <span className="text-xs text-p-muted">Mostrando los {SCATTER_TOP} productos con mayor diferencia respecto a la competencia</span>
               )}
             </div>
             <Plot
@@ -288,8 +320,12 @@ function DashboardTab({ filters }: { filters: string }) {
   )
 }
 
+type DetalleChip = 'todos' | 'mas-caro' | 'mas-barato' | 'sin-competidor'
+
 function DetalleTab({ filters }: { filters: string }) {
   const [page, setPage] = useState(1)
+  const [chip, setChip] = useState<DetalleChip>('todos')
+  const [drawerRow, setDrawerRow] = useState<CompetitionDetailRow | null>(null)
 
   const { data, isLoading } = useQuery({
     queryKey: ['competition-detail', filters, page],
@@ -302,6 +338,12 @@ function DetalleTab({ filters }: { filters: string }) {
     },
   })
 
+  const rows = data?.rows ?? []
+  const total = data?.total ?? 0
+  const totalPages = Math.ceil(total / 25)
+
+  const [searchFiltered, search, setSearch] = useTableSearch(rows, ['nombre', 'codigoSku'])
+
   if (isLoading) {
     return (
       <div className="flex justify-center py-20">
@@ -310,12 +352,33 @@ function DetalleTab({ filters }: { filters: string }) {
     )
   }
 
-  const rows = data?.rows ?? []
-  const total = data?.total ?? 0
-  const totalPages = Math.ceil(total / 25)
+  const chipFiltered = searchFiltered.filter(r => {
+    if (chip === 'mas-caro') return r.diferencialPct > 0
+    if (chip === 'mas-barato') return r.diferencialPct < 0
+    if (chip === 'sin-competidor') return !r.competidorPrincipal
+    return true
+  })
 
   return (
     <div>
+      {/* Search + chips */}
+      <div className="flex items-center gap-3 mb-4 flex-wrap">
+        <SearchInput value={search} onChange={setSearch} placeholder="Buscar producto o código..." />
+        {(['todos', 'mas-caro', 'mas-barato', 'sin-competidor'] as DetalleChip[]).map(c => (
+          <button
+            key={c}
+            onClick={() => setChip(c)}
+            className={`px-3 py-1 rounded-full text-xs transition-colors ${
+              chip === c
+                ? 'bg-p-lime/20 text-p-lime border border-p-lime/40'
+                : 'border border-p-border text-p-muted hover:text-white'
+            }`}
+          >
+            {c === 'todos' ? 'Todos' : c === 'mas-caro' ? 'Más caro que competencia' : c === 'mas-barato' ? 'Más barato que competencia' : 'Sin competidor'}
+          </button>
+        ))}
+      </div>
+
       <div className="glass-panel overflow-hidden">
         <table className="data-table">
           <thead>
@@ -331,8 +394,18 @@ function DetalleTab({ filters }: { filters: string }) {
             </tr>
           </thead>
           <tbody>
-            {rows.map((r) => (
-              <tr key={r.skuId}>
+            {chipFiltered.map((r) => {
+              const abs = Math.abs(r.diferencialPct)
+              const rowBg = abs > 10
+                ? 'rgba(255,107,107,0.06)'
+                : abs > 3 ? 'rgba(245,197,24,0.05)' : undefined
+              return (
+              <tr
+                key={r.skuId}
+                style={{ ...(rowBg ? { backgroundColor: rowBg } : {}), cursor: 'pointer' }}
+                onClick={() => setDrawerRow(r)}
+                className="hover:bg-white/5 transition-colors"
+              >
                 <td className="font-mono text-p-muted text-xs" title={r.codigoSku}>{r.codigoSku}</td>
                 <td className="font-medium text-white" title={r.nombre}>{r.nombre}</td>
                 <td className="text-p-gray-light" title={r.marca}>{r.marca}</td>
@@ -345,11 +418,12 @@ function DetalleTab({ filters }: { filters: string }) {
                   </span>
                 </td>
                 <td className="text-right">
-                  <DiferencialBadge value={r.diferencialPct} />
+                  <SeverityBadge value={r.diferencialPct} />
                 </td>
               </tr>
-            ))}
-            {rows.length === 0 && (
+              )
+            })}
+            {chipFiltered.length === 0 && (
               <tr>
                 <td colSpan={8} className="text-center py-12 text-p-muted">
                   No hay competidores configurados para los productos filtrados
@@ -384,6 +458,84 @@ function DetalleTab({ filters }: { filters: string }) {
           </div>
         </div>
       )}
+
+      {/* Competitor Drawer — M2-3 */}
+      <Drawer
+        isOpen={drawerRow !== null}
+        onClose={() => setDrawerRow(null)}
+        title={drawerRow?.nombre ?? ''}
+        subtitle={drawerRow ? `${drawerRow.codigoSku} · ${drawerRow.marca} · tu precio: $${drawerRow.precioPromedioCliente.toLocaleString()}` : undefined}
+      >
+        {drawerRow && <CompetidorDrawerContent row={drawerRow} />}
+      </Drawer>
+    </div>
+  )
+}
+
+function CompetidorDrawerContent({ row }: { row: CompetitionDetailRow }) {
+  if (!row.competidorPrincipal) {
+    return (
+      <div className="flex flex-col items-center justify-center py-12 gap-2 text-center">
+        <p className="text-[15px] font-medium text-p-gray-light">Sin competidores registrados</p>
+        <p className="text-[13px] text-p-muted max-w-xs">No se encontraron competidores para este producto.</p>
+      </div>
+    )
+  }
+
+  const diff = row.diferencialPct
+  const isMoreExpensive = diff > 0
+  const analysis = isMoreExpensive
+    ? `Eres más caro que ${row.competidorPrincipal} en un ${Math.abs(diff).toFixed(1)}%.`
+    : diff < 0
+      ? `Eres más barato que ${row.competidorPrincipal} en un ${Math.abs(diff).toFixed(1)}%.`
+      : `Tus precios están alineados con ${row.competidorPrincipal}.`
+
+  return (
+    <div className="space-y-5">
+      <div>
+        <h4 className="text-xs font-semibold text-p-muted uppercase tracking-wide mb-3">Competidores observados</h4>
+        <div className="rounded-lg border border-p-border overflow-hidden">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-p-border bg-white/3">
+                <th className="text-left py-2 px-4 text-p-muted font-medium">Competidor</th>
+                <th className="text-right py-2 px-4 text-p-muted font-medium">Precio</th>
+                <th className="text-right py-2 px-4 text-p-muted font-medium">Diferencia</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td className="py-3 px-4 text-white">{row.competidorPrincipal}</td>
+                <td className="py-3 px-4 text-right text-white font-semibold">${row.precioCompetidor.toLocaleString()}</td>
+                <td className="py-3 px-4 text-right">
+                  <SeverityBadge value={row.diferencialPct} />
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div className="rounded-lg bg-white/5 border border-p-border px-4 py-3">
+        <p className="text-sm text-p-gray-light">{analysis}</p>
+      </div>
+
+      <div className="space-y-2">
+        <div className="flex justify-between text-sm">
+          <span className="text-p-muted">Tu precio promedio</span>
+          <span className="text-p-blue font-semibold">${row.precioPromedioCliente.toLocaleString()}</span>
+        </div>
+        <div className="flex justify-between text-sm">
+          <span className="text-p-muted">Precio competidor</span>
+          <span className="text-white font-semibold">${row.precioCompetidor.toLocaleString()}</span>
+        </div>
+        <div className="flex justify-between text-sm border-t border-p-border pt-2 mt-2">
+          <span className="text-p-muted">Diferencia absoluta</span>
+          <span className={row.diferencialAbsoluto > 0 ? 'text-p-red font-semibold' : 'text-p-lime font-semibold'}>
+            {row.diferencialAbsoluto > 0 ? '+' : ''}${row.diferencialAbsoluto.toLocaleString()}
+          </span>
+        </div>
+      </div>
     </div>
   )
 }
@@ -417,7 +569,7 @@ function PorMarcaTab({ filters }: { filters: string }) {
       {pagedBrands.length > 0 && (
         <div className="glass-panel p-6">
           <div className="flex items-center justify-between mb-4">
-            <h3 className="text-base font-semibold text-white">Precio Promedio: Cliente vs Competidor por Marca</h3>
+            <h3 className="text-base font-semibold text-white">Precio promedio tuyo vs. competidor principal, por marca</h3>
             {brands.length > BRAND_COMP_PAGE_SIZE && (
               <span className="text-xs text-p-muted">{page} / {totalPages} — {brands.length} marcas</span>
             )}
@@ -478,11 +630,12 @@ function PorMarcaTab({ filters }: { filters: string }) {
         <table className="data-table">
           <thead>
             <tr>
-              <th style={{ width: '20%' }}>Marca</th>
-              <th style={{ width: '20%' }} className="text-right">Precio Prom. Cliente</th>
-              <th style={{ width: '25%' }} className="text-right">Precio Prom. Competidor</th>
-              <th style={{ width: '20%' }} className="text-right">Diferencial</th>
-              <th style={{ width: '15%' }} className="text-right">SKUs</th>
+              <th style={{ width: '18%' }}>Marca</th>
+              <th style={{ width: '18%' }} className="text-right">Precio prom. tuyo</th>
+              <th style={{ width: '18%' }} className="text-right">Precio prom. competidor</th>
+              <th style={{ width: '15%' }} className="text-right">Diferencial</th>
+              <th style={{ width: '12%' }} className="text-right">SKUs</th>
+              <th style={{ width: '19%' }} className="text-right" title="Diferencia de precio multiplicada por el número de productos de la marca. Indica el potencial de ajuste en términos monetarios.">Oportunidad estimada</th>
             </tr>
           </thead>
           <tbody>
@@ -492,14 +645,17 @@ function PorMarcaTab({ filters }: { filters: string }) {
                 <td className="text-right text-p-blue font-semibold">${b.precioPromedioCliente.toLocaleString()}</td>
                 <td className="text-right text-p-gray-light">${b.precioPromedioCompetidor.toLocaleString()}</td>
                 <td className="text-right">
-                  <DiferencialBadge value={b.diferencialPct} />
+                  <SeverityBadge value={b.diferencialPct} />
                 </td>
                 <td className="text-right text-p-gray-light">{b.skuCount}</td>
+                <td className="text-right text-p-muted">
+                  {b.skuCount > 0 ? `$${(Math.abs(b.precioPromedioCompetidor - b.precioPromedioCliente) * b.skuCount).toLocaleString('es-CO', { maximumFractionDigits: 0 })}` : '—'}
+                </td>
               </tr>
             ))}
             {pagedBrands.length === 0 && (
               <tr>
-                <td colSpan={5} className="text-center py-12 text-p-muted">
+                <td colSpan={6} className="text-center py-12 text-p-muted">
                   No hay datos de competencia para los filtros seleccionados
                 </td>
               </tr>

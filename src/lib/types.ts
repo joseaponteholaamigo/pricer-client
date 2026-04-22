@@ -104,6 +104,7 @@ export interface ElasticidadSummaryRow {
   volumenBase: number
   coeficiente: number
   precioActual: number
+  precioRecomendado?: number
   costoVariable: number
   impactoVolumenPct: number
   impactoIngresosPct: number

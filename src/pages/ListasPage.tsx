@@ -1,14 +1,21 @@
 import { useState, useEffect } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { FileSpreadsheet, FileText, Download } from 'lucide-react'
+import { FileSpreadsheet, FileText } from 'lucide-react'
 import api from '../lib/api'
 import type { ListaSkuRow } from '../lib/types'
+import SearchInput from '../components/SearchInput'
+import { useTableSearch } from '../components/useTableSearch'
 
-const IVA = 1.19
-const MARGEN_MAYORISTA = 0.80
-const MARGEN_RETAIL = 0.65
-const MARGEN_TAT = 0.85
 const PAGE_SIZE = 50
+
+interface CanalConfig {
+  nombre: string
+  margenes: Record<string, number>  // categoria → margen (0.0–1.0)
+}
+interface CanalesConfig {
+  iva: number
+  canales: CanalConfig[]
+}
 
 export default function ListasPage() {
   const [marca, setMarca] = useState('')
@@ -17,6 +24,8 @@ export default function ListasPage() {
   const [edits, setEdits] = useState<Map<string, number>>(new Map())
   const [exportingExcel, setExportingExcel] = useState(false)
   const [exportingCsv, setExportingCsv] = useState(false)
+  const [showResetModal, setShowResetModal] = useState(false)
+  const [exportModal, setExportModal] = useState<'excel' | 'csv' | null>(null)
 
   const filters = `marca=${marca}&categoria=${categoria}&page=${page}&pageSize=${PAGE_SIZE}`
 
@@ -24,6 +33,15 @@ export default function ListasPage() {
     queryKey: ['listas-filters'],
     queryFn: () => api.get<{ marcas: string[]; categorias: string[] }>('/listas/filters').then(r => r.data),
   })
+
+  const { data: canalesConfig } = useQuery<CanalesConfig>({
+    queryKey: ['listas-canales'],
+    queryFn: () => api.get<CanalesConfig>('/listas/canales').then(r => r.data),
+    staleTime: 300_000,
+  })
+
+  const iva = canalesConfig?.iva ?? 0.19
+  const canales = canalesConfig?.canales ?? []
 
   const { data: skus = [], isLoading, dataUpdatedAt } = useQuery({
     queryKey: ['listas-skus', filters],
@@ -61,12 +79,14 @@ export default function ListasPage() {
   }
 
   const editCount = edits.size
+  const [filteredSkus, skuSearch, setSkuSearch] = useTableSearch(skus, ['nombre', 'codigoSku'])
 
   const buildExportItems = () => {
     return [...edits.entries()].map(([skuId, pvp]) => ({ skuId, pvpEditado: pvp }))
   }
 
-  const handleExportExcel = async () => {
+  const doExportExcel = async () => {
+    setExportModal(null)
     setExportingExcel(true)
     try {
       const res = await api.post('/listas/export/excel', { items: buildExportItems() }, { responseType: 'blob' })
@@ -76,7 +96,8 @@ export default function ListasPage() {
     }
   }
 
-  const handleExportCsv = async () => {
+  const doExportCsv = async () => {
+    setExportModal(null)
     setExportingCsv(true)
     try {
       const res = await api.post('/listas/export/csv', { items: buildExportItems() }, { responseType: 'blob' })
@@ -86,10 +107,16 @@ export default function ListasPage() {
     }
   }
 
+  const handleResetAll = () => {
+    setEdits(new Map())
+    setShowResetModal(false)
+  }
+
   return (
     <div>
-      {/* Filters + Export row */}
-      <div className="flex items-center gap-4 mb-6">
+      {/* Search + Filters + Export row */}
+      <div className="flex items-center gap-4 mb-6 flex-wrap">
+        <SearchInput value={skuSearch} onChange={setSkuSearch} placeholder="Buscar producto o código..." />
         <select value={marca} onChange={(e) => setMarca(e.target.value)} className="glass-select">
           <option value="">Todas las marcas</option>
           {filterOptions?.marcas.map(m => <option key={m} value={m}>{m}</option>)}
@@ -101,10 +128,18 @@ export default function ListasPage() {
 
         <div className="ml-auto flex items-center gap-3">
           {editCount > 0 && (
-            <span className="badge badge-yellow text-xs">{editCount} modificado{editCount > 1 ? 's' : ''}</span>
+            <>
+              <span className="badge badge-yellow text-xs">{editCount} precio{editCount > 1 ? 's' : ''} modificado{editCount > 1 ? 's' : ''}</span>
+              <button
+                onClick={() => setShowResetModal(true)}
+                className="text-xs text-p-muted hover:text-white transition-colors"
+              >
+                Restablecer todos
+              </button>
+            </>
           )}
           <button
-            onClick={handleExportExcel}
+            onClick={() => setExportModal('excel')}
             disabled={exportingExcel}
             className="flex items-center gap-2 px-4 py-2 bg-p-lime/20 text-p-lime rounded-lg hover:bg-p-lime/30 transition-colors disabled:opacity-50"
           >
@@ -112,7 +147,7 @@ export default function ListasPage() {
             Excel
           </button>
           <button
-            onClick={handleExportCsv}
+            onClick={() => setExportModal('csv')}
             disabled={exportingCsv}
             className="flex items-center gap-2 px-4 py-2 bg-p-blue/20 text-p-blue rounded-lg hover:bg-p-blue/30 transition-colors disabled:opacity-50"
           >
@@ -136,21 +171,18 @@ export default function ListasPage() {
                 <tr>
                   <th>Código</th>
                   <th>Producto</th>
-                  <th className="text-right" style={{ color: '#a3e635' }}>PVP Sugerido</th>
-                  <th className="text-right">PVP sin IVA</th>
-                  <th className="text-right">Mayorista</th>
-                  <th className="text-right">Retail</th>
-                  <th className="text-right">TAT</th>
-                  <th className="w-8"></th>
+                  <th className="text-right" style={{ color: '#a3e635' }}>Precio sugerido</th>
+                  <th className="text-right">Precio sin IVA</th>
+                  {canales.map(c => (
+                    <th key={c.nombre} className="text-right">{c.nombre}</th>
+                  ))}
+                  <th className="w-8" />
                 </tr>
               </thead>
               <tbody>
-                {skus.map(row => {
+                {filteredSkus.map(row => {
                   const pvp = getPvp(row)
-                  const sinIva = pvp / IVA
-                  const mayorista = sinIva * MARGEN_MAYORISTA
-                  const retail = sinIva * MARGEN_RETAIL
-                  const tat = sinIva * MARGEN_TAT
+                  const sinIva = pvp / (1 + iva)
                   const isEdited = edits.has(row.skuId)
 
                   return (
@@ -173,9 +205,11 @@ export default function ListasPage() {
                         />
                       </td>
                       <td className="text-right text-p-muted">{fmtPeso(sinIva)}</td>
-                      <td className="text-right text-p-muted">{fmtPeso(mayorista)}</td>
-                      <td className="text-right text-p-muted">{fmtPeso(retail)}</td>
-                      <td className="text-right text-p-muted">{fmtPeso(tat)}</td>
+                      {canales.map(c => (
+                        <td key={c.nombre} className="text-right text-p-muted">
+                          {fmtPeso(sinIva * (c.margenes[row.categoria] ?? 0))}
+                        </td>
+                      ))}
                       <td className="text-center">
                         {isEdited && (
                           <button
@@ -192,7 +226,7 @@ export default function ListasPage() {
                 })}
                 {skus.length === 0 && (
                   <tr>
-                    <td colSpan={8} className="text-center text-p-muted py-8">
+                    <td colSpan={4 + canales.length + 1} className="text-center text-p-muted py-8">
                       No hay SKUs disponibles
                     </td>
                   </tr>
@@ -227,8 +261,11 @@ export default function ListasPage() {
           )}
 
           {/* Legend */}
-          <div className="flex items-center gap-6 mt-4 text-xs text-p-muted">
-            <span>IVA: 19% · Mayorista: ×0.80 · Retail: ×0.65 · TAT: ×0.85</span>
+          <div className="flex items-center gap-6 mt-4 text-xs text-p-muted flex-wrap">
+            <span>
+              IVA: {((iva) * 100).toFixed(0)}%
+              {canales.map(c => ` · ${c.nombre}`).join('')}
+            </span>
             <span className="flex items-center gap-1">
               <span className="w-3 h-3 rounded border border-p-lime/40 inline-block" /> Editable
             </span>
@@ -237,6 +274,65 @@ export default function ListasPage() {
             </span>
           </div>
         </>
+      )}
+
+      {/* Reset Modal */}
+      {showResetModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: 'rgba(0,0,0,0.5)' }}>
+          <div className="glass-panel p-6 w-full max-w-sm mx-4 space-y-4">
+            <h3 className="text-base font-semibold text-white">¿Descartar todos los cambios?</h3>
+            <p className="text-sm text-p-muted">Se volverán a los precios originales. Esta acción no se puede deshacer.</p>
+            <div className="flex gap-3 justify-end">
+              <button onClick={() => setShowResetModal(false)} className="px-4 py-2 text-sm border border-p-border rounded-lg text-p-muted hover:text-white transition-colors">Cancelar</button>
+              <button onClick={handleResetAll} className="px-4 py-2 text-sm bg-p-red/20 text-p-red border border-p-red/30 rounded-lg hover:bg-p-red/30 transition-colors">Descartar cambios</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Export Modal */}
+      {exportModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: 'rgba(0,0,0,0.5)' }}>
+          <div className="glass-panel p-6 w-full max-w-md mx-4 space-y-4">
+            <h3 className="text-base font-semibold text-white">Exportar lista de precios</h3>
+            {editCount > 0 ? (
+              <>
+                <p className="text-sm text-p-muted">Estos son los precios modificados que se incluirán en la exportación:</p>
+                <div className="overflow-auto max-h-48 rounded-lg border border-p-border">
+                  <table className="w-full text-xs">
+                    <thead>
+                      <tr className="border-b border-p-border">
+                        <th className="text-left py-2 px-3 text-p-muted">Producto</th>
+                        <th className="text-right py-2 px-3 text-p-muted">Precio anterior</th>
+                        <th className="text-right py-2 px-3 text-p-muted">Precio nuevo</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {skus.filter(s => edits.has(s.skuId)).map(s => (
+                        <tr key={s.skuId} className="border-b border-p-border/50">
+                          <td className="py-2 px-3 text-white">{s.nombre}</td>
+                          <td className="py-2 px-3 text-right text-p-muted">{fmtPeso(s.pvpSugerido)}</td>
+                          <td className="py-2 px-3 text-right text-p-lime">{fmtPeso(edits.get(s.skuId)!)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </>
+            ) : (
+              <p className="text-sm text-p-muted">Se exportará la lista con los precios actuales sin modificaciones.</p>
+            )}
+            <div className="flex gap-3 justify-end">
+              <button onClick={() => setExportModal(null)} className="px-4 py-2 text-sm border border-p-border rounded-lg text-p-muted hover:text-white transition-colors">Cancelar</button>
+              <button
+                onClick={exportModal === 'excel' ? doExportExcel : doExportCsv}
+                className="btn-primary px-4 py-2 text-sm"
+              >
+                Confirmar y descargar
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   )

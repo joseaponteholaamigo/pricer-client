@@ -1,16 +1,16 @@
 import { useState, useEffect } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { Activity, BarChart3, TrendingDown, AlertTriangle, Percent } from 'lucide-react'
+import { Activity, BarChart3, TrendingDown, AlertTriangle, ArrowRight } from 'lucide-react'
+import { useNavigate } from 'react-router-dom'
 import api from '../lib/api'
 import type { ElasticidadKpis, ElasticidadSummaryRow, SkuElasticidadDetail } from '../lib/types'
-
-type Tab = 'resumen' | 'simulador'
+import Drawer from '../components/Drawer'
 
 export default function ElasticidadPage() {
-  const [tab, setTab] = useState<Tab>('resumen')
   const [marca, setMarca] = useState('')
   const [categoria, setCategoria] = useState('')
-  const [selectedSkuId, setSelectedSkuId] = useState<string | null>(null)
+  const [drawerSkuId, setDrawerSkuId] = useState<string | null>(null)
+  const [drawerRow, setDrawerRow] = useState<ElasticidadSummaryRow | null>(null)
 
   const { data: filterOptions } = useQuery({
     queryKey: ['elasticidad-filters'],
@@ -18,10 +18,11 @@ export default function ElasticidadPage() {
   })
 
   const filters = `marca=${marca}&categoria=${categoria}`
+  const navigate = useNavigate()
 
-  const handleSkuClick = (skuId: string) => {
-    setSelectedSkuId(skuId)
-    setTab('simulador')
+  const handleSkuClick = (skuId: string, row: ElasticidadSummaryRow) => {
+    setDrawerSkuId(skuId)
+    setDrawerRow(row)
   }
 
   return (
@@ -38,28 +39,31 @@ export default function ElasticidadPage() {
         </select>
       </div>
 
-      {/* Sub-tabs */}
-      <div className="flex gap-4 border-b border-p-border mb-6">
-        {([['resumen', 'Resumen'], ['simulador', 'Simulador por SKU']] as const).map(([key, label]) => (
-          <button
-            key={key}
-            onClick={() => setTab(key)}
-            className={`sub-tab ${tab === key ? 'sub-tab-active' : ''}`}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
+      <ResumenTab filters={filters} onSkuClick={handleSkuClick} />
 
-      {tab === 'resumen' && <ResumenTab filters={filters} onSkuClick={handleSkuClick} />}
-      {tab === 'simulador' && <SimuladorTab skuId={selectedSkuId} filters={filters} />}
+      <Drawer
+        isOpen={!!drawerSkuId}
+        title={drawerRow?.nombre ?? ''}
+        subtitle={drawerRow ? `Elasticidad: ${drawerRow.coeficiente.toFixed(2)} · ${drawerRow.codigoSku} · ${drawerRow.marca}` : undefined}
+        onClose={() => { setDrawerSkuId(null); setDrawerRow(null) }}
+        footer={
+          <button
+            onClick={() => navigate('/listas')}
+            className="btn-primary w-full flex items-center justify-center gap-2 text-sm"
+          >
+            Aplicar este precio en el Generador de Listas <ArrowRight size={14} />
+          </button>
+        }
+      >
+        {drawerSkuId && <SimuladorContent skuId={drawerSkuId} />}
+      </Drawer>
     </div>
   )
 }
 
 // ─── Resumen Tab ─────────────────────────────────────────────
 
-function ResumenTab({ filters, onSkuClick }: { filters: string; onSkuClick: (skuId: string) => void }) {
+function ResumenTab({ filters, onSkuClick }: { filters: string; onSkuClick: (skuId: string, row: ElasticidadSummaryRow) => void }) {
   const { data: kpis, isLoading: kpisLoading } = useQuery({
     queryKey: ['elasticidad-kpis', filters],
     queryFn: () => api.get<ElasticidadKpis>(`/elasticidad/kpis?${filters}`).then(r => r.data),
@@ -87,40 +91,30 @@ function ResumenTab({ filters, onSkuClick }: { filters: string; onSkuClick: (sku
           value={String(kpis?.totalSkusConElasticidad ?? 0)}
           icon={Activity}
           color="text-p-blue"
-          sub="Productos configurados"
+          sub={`${kpis?.totalSkusConElasticidad ?? 0} de ${(kpis as unknown as { totalSkus?: number })?.totalSkus ?? '—'} productos activos`}
           subColor="text-p-muted"
         />
         <KpiCard
-          label="Coeficiente Promedio"
+          label="Elasticidad promedio"
           value={String(kpis?.coeficientePromedio ?? 0)}
           icon={TrendingDown}
           color="text-p-yellow"
-          sub="Sensibilidad promedio al precio"
+          sub="A mayor valor absoluto, más sensible al precio"
           subColor="text-p-muted"
         />
         <KpiCard
-          label="Confianza Promedio"
-          value={`${kpis?.confianzaPromedio ?? 0}%`}
-          icon={Percent}
-          color={(kpis?.confianzaPromedio ?? 0) >= 70 ? 'text-p-lime' : 'text-p-yellow'}
-          sub={
-            (kpis?.confianzaPromedio ?? 0) >= 70 ? 'Nivel aceptable' : 'Revisar datos'
-          }
-          subColor={(kpis?.confianzaPromedio ?? 0) >= 70 ? 'text-p-lime' : 'text-p-yellow'}
-        />
-        <KpiCard
-          label="SKU Más Elástico"
+          label="Producto más sensible al precio"
           value={kpis?.skuMasElastico?.nombre ?? '—'}
           icon={BarChart3}
           color="text-p-red"
-          sub={kpis?.skuMasElastico ? `Coef: ${kpis.skuMasElastico.coeficiente}` : undefined}
+          sub={kpis?.skuMasElastico ? `Elasticidad ${kpis.skuMasElastico.coeficiente}` : undefined}
           subColor="text-p-red"
         />
       </div>
 
       {/* Summary subtitle */}
       <p className="text-p-muted text-sm">
-        Impacto proyectado con un cambio de +5% en precio — Haz clic en una fila para simular
+        Proyección con un alza de +5% en precio. Haz clic en un producto para ajustar el porcentaje.
       </p>
 
       {/* Summary Table */}
@@ -129,21 +123,25 @@ function ResumenTab({ filters, onSkuClick }: { filters: string; onSkuClick: (sku
           <thead>
             <tr>
               <th>Producto</th>
-              <th className="text-right">Vol. Base</th>
-              <th className="text-right">Coeficiente</th>
-              <th className="text-right">Precio Actual</th>
-              <th className="text-right">Impacto Vol%</th>
-              <th className="text-right">Impacto Ingr%</th>
-              <th className="text-right">Impacto Margen%</th>
-              <th className="text-center">Confianza</th>
+              <th className="text-right">Unidades base</th>
+              <th className="text-right">Elasticidad</th>
+              <th className="text-right">Precio recomendado</th>
+              <th className="text-right">Precio actual</th>
+              <th className="text-right">Impacto en volumen</th>
+              <th className="text-right">Impacto en ingresos</th>
+              <th className="text-right">Impacto en margen</th>
             </tr>
           </thead>
           <tbody>
-            {rows.map(r => (
+            {(() => {
+              const maxVol = Math.max(...rows.map(r => Math.abs(r.impactoVolumenPct)), 0.01)
+              const maxIng = Math.max(...rows.map(r => Math.abs(r.impactoIngresosPct)), 0.01)
+              const maxMar = Math.max(...rows.map(r => Math.abs(r.impactoMargenPct)), 0.01)
+              return rows.map(r => (
               <tr
                 key={r.skuId}
                 className="cursor-pointer hover:bg-p-bg-hover transition-colors"
-                onClick={() => onSkuClick(r.skuId)}
+                onClick={() => onSkuClick(r.skuId, r)}
               >
                 <td>
                   <div className="font-medium">{r.nombre}</div>
@@ -151,21 +149,22 @@ function ResumenTab({ filters, onSkuClick }: { filters: string; onSkuClick: (sku
                 </td>
                 <td className="text-right">{r.volumenBase.toLocaleString('es-CO')}</td>
                 <td className="text-right">{r.coeficiente.toFixed(2)}</td>
+                <td className="text-right text-p-lime">
+                  {r.precioRecomendado != null ? `$${r.precioRecomendado.toLocaleString('es-CO', { maximumFractionDigits: 0 })}` : '—'}
+                </td>
                 <td className="text-right">${r.precioActual.toLocaleString('es-CO', { maximumFractionDigits: 0 })}</td>
                 <td className="text-right">
-                  <ImpactBadge value={r.impactoVolumenPct} />
+                  <SparkCell value={r.impactoVolumenPct} maxAbs={maxVol} />
                 </td>
                 <td className="text-right">
-                  <ImpactBadge value={r.impactoIngresosPct} />
+                  <SparkCell value={r.impactoIngresosPct} maxAbs={maxIng} />
                 </td>
                 <td className="text-right">
-                  <ImpactBadge value={r.impactoMargenPct} />
-                </td>
-                <td className="text-center">
-                  <ConfianzaBadge value={r.nivelConfianza} />
+                  <SparkCell value={r.impactoMargenPct} maxAbs={maxMar} />
                 </td>
               </tr>
-            ))}
+              ))
+            })()}
             {rows.length === 0 && (
               <tr>
                 <td colSpan={8} className="text-center text-p-muted py-8">
@@ -180,53 +179,18 @@ function ResumenTab({ filters, onSkuClick }: { filters: string; onSkuClick: (sku
   )
 }
 
-// ─── Simulador Tab ───────────────────────────────────────────
+// ─── Simulador Content (Drawer) ──────────────────────────────
 
-function SimuladorTab({ skuId, filters }: { skuId: string | null; filters: string }) {
-  const { data: summaryRows = [] } = useQuery({
-    queryKey: ['elasticidad-summary', filters],
-    queryFn: () => api.get<ElasticidadSummaryRow[]>(`/elasticidad/summary?${filters}`).then(r => r.data),
-  })
-
-  const [currentSkuId, setCurrentSkuId] = useState<string | null>(skuId)
-  const [sliderValue, setSliderValue] = useState(0) // -50 to +50
-
-  useEffect(() => {
-    if (skuId) setCurrentSkuId(skuId)
-  }, [skuId])
-
-  useEffect(() => {
-    setSliderValue(0)
-  }, [currentSkuId])
+function SimuladorContent({ skuId }: { skuId: string }) {
+  const [sliderValue, setSliderValue] = useState(0)
 
   const { data: detail, isLoading } = useQuery({
-    queryKey: ['elasticidad-sku', currentSkuId],
-    queryFn: () => api.get<SkuElasticidadDetail>(`/elasticidad/sku/${currentSkuId}`).then(r => r.data),
-    enabled: !!currentSkuId,
+    queryKey: ['elasticidad-sku', skuId],
+    queryFn: () => api.get<SkuElasticidadDetail>(`/elasticidad/sku/${skuId}`).then(r => r.data),
+    enabled: !!skuId,
   })
 
-  if (!currentSkuId) {
-    return (
-      <div className="glass-panel p-12 text-center text-p-muted">
-        <Activity size={48} className="mx-auto mb-4 opacity-40" />
-        <p className="text-lg">Selecciona un SKU para simular</p>
-        <p className="text-sm mt-2">Puedes elegir uno de la lista o del dropdown arriba</p>
-        {summaryRows.length > 0 && (
-          <div className="mt-6">
-            <select
-              onChange={(e) => setCurrentSkuId(e.target.value || null)}
-              className="glass-select"
-            >
-              <option value="">Elige un producto...</option>
-              {summaryRows.map(r => (
-                <option key={r.skuId} value={r.skuId}>{r.nombre} ({r.codigoSku})</option>
-              ))}
-            </select>
-          </div>
-        )}
-      </div>
-    )
-  }
+  useEffect(() => { setSliderValue(0) }, [skuId])
 
   if (isLoading) {
     return (
@@ -263,33 +227,11 @@ function SimuladorTab({ skuId, filters }: { skuId: string | null; filters: strin
   const margenDelta = margenSimulado - margenActual
   const margenDeltaPct = margenActual > 0 ? (margenDelta / margenActual) * 100 : 0
 
-  const confianzaPct = detail.confianza * 100
   const margenNegativo = margenSimulado < 0
 
   return (
-    <div className="space-y-6">
-      {/* SKU Selector */}
-      <div className="flex items-center gap-4">
-        <select
-          value={currentSkuId}
-          onChange={(e) => setCurrentSkuId(e.target.value)}
-          className="glass-select"
-        >
-          {summaryRows.map(r => (
-            <option key={r.skuId} value={r.skuId}>{r.nombre} ({r.codigoSku})</option>
-          ))}
-        </select>
-      </div>
-
+    <div className="space-y-5">
       {/* Alerts */}
-      {confianzaPct < 50 && (
-        <div className="flex items-center gap-3 bg-yellow-500/10 border border-yellow-500/30 rounded-lg px-4 py-3">
-          <AlertTriangle size={18} className="text-yellow-400 flex-shrink-0" />
-          <span className="text-yellow-300 text-sm">
-            Confianza baja ({confianzaPct.toFixed(0)}%) — Los resultados pueden ser poco confiables
-          </span>
-        </div>
-      )}
       {margenNegativo && sliderValue !== 0 && (
         <div className="flex items-center gap-3 bg-red-500/10 border border-red-500/30 rounded-lg px-4 py-3">
           <AlertTriangle size={18} className="text-red-400 flex-shrink-0" />
@@ -300,7 +242,7 @@ function SimuladorTab({ skuId, filters }: { skuId: string | null; filters: strin
       )}
 
       {/* Base Data Cards */}
-      <div className="grid grid-cols-3 gap-5">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
         <div className="glass-panel p-5">
           <p className="text-sm text-p-muted mb-1">Volumen Base</p>
           <p className="text-2xl font-bold text-p-text">{detail.volumenBase.toLocaleString('es-CO')} uds</p>
@@ -312,7 +254,6 @@ function SimuladorTab({ skuId, filters }: { skuId: string | null; filters: strin
         <div className="glass-panel p-5">
           <p className="text-sm text-p-muted mb-1">Coeficiente de Elasticidad</p>
           <p className="text-2xl font-bold text-p-yellow">{detail.coeficiente.toFixed(2)}</p>
-          <p className="text-xs text-p-muted mt-1">Confianza: <ConfianzaBadge value={confianzaPct} /></p>
         </div>
       </div>
 
@@ -346,7 +287,7 @@ function SimuladorTab({ skuId, filters }: { skuId: string | null; filters: strin
       </div>
 
       {/* Result Cards */}
-      <div className="grid grid-cols-3 gap-5">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
         {/* Volumen */}
         <div className="glass-panel p-5">
           <p className="text-sm text-p-muted mb-2">Volumen Proyectado</p>
@@ -416,9 +357,16 @@ function ImpactBadge({ value }: { value: number }) {
   return <span className={cls}>{value > 0 ? '+' : ''}{value.toFixed(1)}%</span>
 }
 
-function ConfianzaBadge({ value }: { value: number }) {
-  const cls = value >= 70 ? 'badge badge-green' : value >= 50 ? 'badge badge-yellow' : 'badge badge-red'
-  return <span className={cls}>{value.toFixed(0)}%</span>
+function SparkCell({ value, maxAbs }: { value: number; maxAbs: number }) {
+  const width = maxAbs > 0 ? Math.round((Math.abs(value) / maxAbs) * 100) : 0
+  return (
+    <div className="inline-flex flex-col items-end gap-1">
+      <ImpactBadge value={value} />
+      <div className="w-14 h-1 rounded-full overflow-hidden" style={{ background: 'rgba(255,255,255,0.06)' }}>
+        <div className="h-full rounded-full" style={{ width: `${width}%`, background: value >= 0 ? '#AEC911' : '#FF5757' }} />
+      </div>
+    </div>
+  )
 }
 
 function formatMillones(value: number): string {

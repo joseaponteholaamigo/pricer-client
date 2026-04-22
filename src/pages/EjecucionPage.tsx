@@ -3,6 +3,10 @@ import { useQuery } from '@tanstack/react-query'
 import Plot from '../lib/plotly'
 import { TrendingUp, TrendingDown, AlertTriangle, Box, Store } from 'lucide-react'
 import api from '../lib/api'
+import SeverityBadge from '../components/SeverityBadge'
+import Drawer from '../components/Drawer'
+import SearchInput from '../components/SearchInput'
+import { useTableSearch } from '../components/useTableSearch'
 import type { DashboardKpis, BrandExecution, DetailRow, ProfitPoolItem } from '../lib/types'
 
 type Tab = 'dashboard' | 'detalle' | 'profit-pool'
@@ -11,18 +15,27 @@ export default function EjecucionPage() {
   const [tab, setTab] = useState<Tab>('dashboard')
   const [marca, setMarca] = useState('')
   const [retailer, setRetailer] = useState('')
+  const [sku, setSku] = useState('')
+  const [fechaDesde, setFechaDesde] = useState('')
+  const [fechaHasta, setFechaHasta] = useState('')
 
   const { data: filterOptions } = useQuery({
     queryKey: ['execution-filters'],
     queryFn: () => api.get<{ marcas: string[]; retailers: string[] }>('/execution/filters').then(r => r.data),
   })
 
-  const filters = `marca=${marca}&retailer=${retailer}`
+  const filters = [
+    marca      && `marca=${marca}`,
+    retailer   && `retailer=${retailer}`,
+    sku        && `sku=${encodeURIComponent(sku)}`,
+    fechaDesde && `fechaDesde=${fechaDesde}`,
+    fechaHasta && `fechaHasta=${fechaHasta}`,
+  ].filter(Boolean).join('&')
 
   return (
     <div>
       {/* Filters row */}
-      <div className="flex items-center gap-4 mb-6">
+      <div className="flex items-center gap-3 mb-6 flex-wrap">
         <select
           value={marca}
           onChange={(e) => setMarca(e.target.value)}
@@ -43,11 +56,32 @@ export default function EjecucionPage() {
             <option key={r} value={r}>{r}</option>
           ))}
         </select>
+        <input
+          type="text"
+          placeholder="Buscar SKU…"
+          value={sku}
+          onChange={e => setSku(e.target.value)}
+          className="glass-select w-40"
+        />
+        <input
+          type="date"
+          value={fechaDesde}
+          onChange={e => setFechaDesde(e.target.value)}
+          className="glass-select w-36"
+          title="Desde"
+        />
+        <input
+          type="date"
+          value={fechaHasta}
+          onChange={e => setFechaHasta(e.target.value)}
+          className="glass-select w-36"
+          title="Hasta"
+        />
       </div>
 
       {/* Sub-tabs */}
       <div className="flex gap-4 border-b border-p-border mb-6">
-        {([['dashboard', 'Dashboard'], ['detalle', 'Detalle por SKU y Retailer'], ['profit-pool', 'Priorización por Profit Pool']] as const).map(([key, label]) => (
+        {([['dashboard', 'Dashboard'], ['detalle', 'Detalle por producto'], ['profit-pool', 'Priorizar por margen']] as const).map(([key, label]) => (
           <button
             key={key}
             onClick={() => setTab(key)}
@@ -69,6 +103,7 @@ const BRAND_PAGE_SIZE = 10
 
 function DashboardTab({ filters }: { filters: string }) {
   const [brandPage, setBrandPage] = useState(1)
+  const [drawerMarca, setDrawerMarca] = useState<BrandExecution | null>(null)
 
   useEffect(() => { setBrandPage(1) }, [filters])
 
@@ -77,10 +112,13 @@ function DashboardTab({ filters }: { filters: string }) {
     queryFn: () => api.get<DashboardKpis>(`/execution/dashboard?${filters}`).then(r => r.data),
   })
 
-  const { data: brands = [] } = useQuery({
+  const { data: brandsRaw = [] } = useQuery({
     queryKey: ['execution-brand', filters],
     queryFn: () => api.get<BrandExecution[]>(`/execution/brand?${filters}`).then(r => r.data),
   })
+  const brands = [...brandsRaw].sort((a, b) =>
+    Math.abs(b.desviacionPct - 100) - Math.abs(a.desviacionPct - 100)
+  )
 
   if (kpisLoading) {
     return (
@@ -98,11 +136,13 @@ function DashboardTab({ filters }: { filters: string }) {
       {/* KPI Cards - 4 columns */}
       <div className="grid grid-cols-4 gap-5">
         <KpiCard
-          label="Índice Ejecución Total"
-          value={`${desviacion}%`}
+          label="Índice de Ejecución"
+          value={String(desviacion)}
           icon={desviacionDiff >= 0 ? TrendingUp : TrendingDown}
           color={Math.abs(desviacionDiff) <= 5 ? 'text-p-lime' : 'text-p-red'}
-          sub={`${desviacionDiff >= 0 ? '+' : ''}${desviacionDiff.toFixed(0)}% ${desviacionDiff >= 0 ? 'por encima del sugerido' : 'por debajo del sugerido'}`}
+          sub={desviacionDiff === 0
+            ? 'En línea con el precio sugerido'
+            : `${desviacionDiff > 0 ? '+' : ''}${desviacionDiff.toFixed(0)}% ${desviacionDiff > 0 ? 'por encima del sugerido' : 'por debajo del sugerido'}`}
           subColor={Math.abs(desviacionDiff) <= 5 ? 'text-p-lime' : 'text-p-red'}
         />
         <KpiCard
@@ -114,22 +154,22 @@ function DashboardTab({ filters }: { filters: string }) {
           subColor="text-p-muted"
         />
         <KpiCard
-          label="SKUs Desfasados (>5%)"
+          label="SKUs con Desviación Crítica"
           value={String(kpis?.skusCriticos ?? 0)}
           icon={AlertTriangle}
           color="text-p-red"
-          sub="Urge revisión con key accounts"
+          sub="Revisar con los principales clientes"
           subColor="text-p-red"
           alert={!!kpis?.skusCriticos}
         />
         <KpiCard
-          label="Mayor Desviación"
+          label="Retailer más alejado del precio sugerido"
           value={kpis?.retailerMayorDesviacion?.retailer ?? '—'}
           icon={Store}
           color="text-p-blue"
-          sub={kpis?.retailerMayorDesviacion
-            ? `Promedio ${kpis.retailerMayorDesviacion.desviacion > 100 ? '+' : ''}${(kpis.retailerMayorDesviacion.desviacion - 100).toFixed(0)}% vs Sugerido`
-            : undefined}
+          sub={kpis?.retailerMayorDesviacion && !isNaN(kpis.retailerMayorDesviacion.desviacion)
+            ? `${Math.abs(kpis.retailerMayorDesviacion.desviacion - 100).toFixed(0)}% de diferencia`
+            : 'Sin datos disponibles'}
           subColor="text-p-red"
         />
       </div>
@@ -143,7 +183,7 @@ function DashboardTab({ filters }: { filters: string }) {
           <>
             <div className="glass-panel p-6">
               <div className="flex items-center justify-between mb-4">
-                <h3 className="text-base font-semibold text-white">Índice de Ejecución por Marca</h3>
+                <h3 className="text-base font-semibold text-white">Cumplimiento de precio sugerido por marca</h3>
                 {brands.length > BRAND_PAGE_SIZE && (
                   <span className="text-xs text-p-muted">{brandPage} / {brandTotalPages} — {brands.length} marcas</span>
                 )}
@@ -155,17 +195,16 @@ function DashboardTab({ filters }: { filters: string }) {
                     y: pagedBrands.map(b => b.desviacionPct),
                     type: 'bar',
                     marker: {
-                      color: pagedBrands.map(b =>
-                        b.desviacionPct > 105 ? '#FF5757'
-                        : b.desviacionPct < 95 ? '#F4CD29'
-                        : '#AEC911'
-                      ),
+                      color: pagedBrands.map(b => {
+                        const dev = Math.abs(b.desviacionPct - 100)
+                        return dev > 5 ? '#FF5757' : dev > 3 ? '#F4CD29' : '#AEC911'
+                      }),
                       borderRadius: 4,
                     },
-                    text: pagedBrands.map(b => `${b.desviacionPct}%`),
+                    text: pagedBrands.map(b => `${b.desviacionPct}`),
                     textposition: 'outside' as const,
                     textfont: { color: '#D5D5D7', size: 12 },
-                    hovertemplate: '%{x}<br>Ejecución: %{y}%<extra></extra>',
+                    hovertemplate: '%{x}<br>Índice de Ejecución: %{y}<extra></extra>',
                   },
                 ]}
                 layout={{
@@ -182,7 +221,6 @@ function DashboardTab({ filters }: { filters: string }) {
                     color: '#8e919e',
                     gridcolor: 'rgba(255,255,255,0.05)',
                     range: [80, 120],
-                    ticksuffix: '%',
                   },
                   shapes: [{
                     type: 'line',
@@ -195,7 +233,7 @@ function DashboardTab({ filters }: { filters: string }) {
                   annotations: [{
                     x: pagedBrands.length - 0.5,
                     y: 100,
-                    text: 'Sugerido (100%)',
+                    text: 'Sugerido (100)',
                     showarrow: false,
                     font: { size: 11, color: 'rgba(255,255,255,0.6)' },
                     xanchor: 'right',
@@ -205,6 +243,11 @@ function DashboardTab({ filters }: { filters: string }) {
                 config={{ responsive: true, displayModeBar: false }}
                 className="w-full"
               />
+              <div className="flex items-center gap-4 mt-2 text-xs text-p-muted">
+                <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-sm inline-block" style={{ background: '#AEC911' }} />Dentro del rango</span>
+                <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-sm inline-block" style={{ background: '#F4CD29' }} />Desviación moderada</span>
+                <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-sm inline-block" style={{ background: '#FF5757' }} />Desviación crítica</span>
+              </div>
             </div>
 
             <div className="glass-panel overflow-hidden">
@@ -223,12 +266,12 @@ function DashboardTab({ filters }: { filters: string }) {
                 </thead>
                 <tbody>
                   {pagedBrands.map(b => (
-                    <tr key={b.marca}>
+                    <tr key={b.marca} className="cursor-pointer" onClick={() => setDrawerMarca(b)}>
                       <td className="font-medium text-white" title={b.marca}>{b.marca}</td>
                       <td className="text-right text-p-gray-light">${b.pvpSugeridoPromedio.toLocaleString()}</td>
                       <td className="text-right text-p-gray-light">${b.precioObservadoPromedio.toLocaleString()}</td>
                       <td className="text-right">
-                        <DesviacionBadge value={b.desviacionPct} />
+                        <SeverityBadge value={b.desviacionPct - 100} />
                       </td>
                       <td className="text-right text-p-gray-light">{b.skuCount}</td>
                     </tr>
@@ -264,12 +307,66 @@ function DashboardTab({ filters }: { filters: string }) {
           </>
         )
       })()}
+
+      <Drawer
+        isOpen={!!drawerMarca}
+        title={drawerMarca?.marca ?? ''}
+        subtitle={drawerMarca ? `${drawerMarca.skuCount} productos · índice de ejecución: ${drawerMarca.desviacionPct.toFixed(1)}%` : undefined}
+        onClose={() => setDrawerMarca(null)}
+      >
+        {drawerMarca && <MarcaDrawerContent marca={drawerMarca} filters={filters} />}
+      </Drawer>
     </div>
   )
 }
 
+function MarcaDrawerContent({ marca, filters }: { marca: BrandExecution; filters: string }) {
+  const { data: rows = [], isLoading } = useQuery({
+    queryKey: ['execution-detail-marca', marca.marca, filters],
+    queryFn: () => api.get<DetailRow[]>(`/execution/detail?${filters}&marca=${encodeURIComponent(marca.marca)}&pageSize=50`).then(r => r.data),
+  })
+
+  if (isLoading) {
+    return <div className="flex justify-center py-10"><div className="animate-spin rounded-full h-6 w-6 border-2 border-p-lime border-t-transparent" /></div>
+  }
+
+  return (
+    <table className="w-full text-sm">
+      <thead>
+        <tr className="border-b border-p-border text-p-muted text-xs uppercase tracking-wider">
+          <th className="text-left py-2 px-3">Producto</th>
+          <th className="text-right py-2 px-3">Sugerido</th>
+          <th className="text-right py-2 px-3">Observado</th>
+          <th className="text-right py-2 px-3">Desviación</th>
+          <th className="text-left py-2 px-3">Retailer</th>
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map(r => (
+          <tr key={`${r.skuId}-${r.retailer}`} className="border-b border-p-border/50">
+            <td className="py-2 px-3">
+              <div className="text-white text-xs font-medium">{r.nombre}</div>
+              <div className="text-p-muted text-xs">{r.codigoSku}</div>
+            </td>
+            <td className="py-2 px-3 text-right text-p-muted text-xs">${r.pvpSugerido.toLocaleString()}</td>
+            <td className="py-2 px-3 text-right text-p-muted text-xs">${r.precioObservado.toLocaleString()}</td>
+            <td className="py-2 px-3 text-right"><SeverityBadge value={r.desviacionPct - 100} /></td>
+            <td className="py-2 px-3 text-p-muted text-xs">{r.retailer}</td>
+          </tr>
+        ))}
+        {rows.length === 0 && (
+          <tr><td colSpan={5} className="text-center py-8 text-p-muted text-sm">Sin datos para esta marca</td></tr>
+        )}
+      </tbody>
+    </table>
+  )
+}
+
+type DetalleChip = 'todos' | 'con-desviacion' | 'criticos'
+
 function DetalleTab({ filters }: { filters: string }) {
   const [page, setPage] = useState(1)
+  const [chip, setChip] = useState<DetalleChip>('todos')
 
   useEffect(() => { setPage(1) }, [filters])
 
@@ -284,6 +381,25 @@ function DetalleTab({ filters }: { filters: string }) {
     },
   })
 
+  const rows = data?.rows ?? []
+  const total = data?.total ?? 0
+  const totalPages = Math.ceil(total / 25)
+
+  const [searchFiltered, search, setSearch] = useTableSearch(rows, ['nombre', 'codigoSku'])
+
+  const chipFiltered = searchFiltered.filter(r => {
+    const dev = Math.abs(r.desviacionPct - 100)
+    if (chip === 'con-desviacion') return dev > 0
+    if (chip === 'criticos') return dev > 5
+    return true
+  })
+
+  const chipLabels: Record<DetalleChip, string> = {
+    todos: 'Todos',
+    'con-desviacion': 'Con desviación',
+    'criticos': 'Críticos (>5%)',
+  }
+
   if (isLoading) {
     return (
       <div className="flex justify-center py-20">
@@ -292,12 +408,26 @@ function DetalleTab({ filters }: { filters: string }) {
     )
   }
 
-  const rows = data?.rows ?? []
-  const total = data?.total ?? 0
-  const totalPages = Math.ceil(total / 25)
-
   return (
     <div>
+      {/* Search + chips */}
+      <div className="flex items-center gap-3 mb-4 flex-wrap">
+        <SearchInput value={search} onChange={setSearch} placeholder="Buscar producto o código..." />
+        {(Object.keys(chipLabels) as DetalleChip[]).map(c => (
+          <button
+            key={c}
+            onClick={() => setChip(c)}
+            className={`px-3 py-1 rounded-full text-xs transition-colors ${
+              chip === c
+                ? 'bg-p-lime/20 text-p-lime border border-p-lime/40'
+                : 'border border-p-border text-p-muted hover:text-white'
+            }`}
+          >
+            {chipLabels[c]}
+          </button>
+        ))}
+      </div>
+
       <div className="glass-panel overflow-hidden">
         <table className="data-table">
           <thead>
@@ -313,7 +443,7 @@ function DetalleTab({ filters }: { filters: string }) {
             </tr>
           </thead>
           <tbody>
-            {rows.map((r, i) => (
+            {chipFiltered.map((r, i) => (
               <tr key={`${r.skuId}-${r.retailer}-${i}`}>
                 <td className="font-mono text-p-muted text-xs" title={r.codigoSku}>{r.codigoSku}</td>
                 <td className="font-medium text-white" title={r.nombre}>{r.nombre}</td>
@@ -322,12 +452,12 @@ function DetalleTab({ filters }: { filters: string }) {
                 <td className="text-p-gray-light">{r.retailer}</td>
                 <td className="text-right text-white font-semibold">${r.precioObservado.toLocaleString()}</td>
                 <td className="text-right">
-                  <DesviacionBadge value={r.desviacionPct} />
+                  <SeverityBadge value={r.desviacionPct - 100} />
                 </td>
                 <td className="text-p-muted text-xs">{r.fechaScraping}</td>
               </tr>
             ))}
-            {rows.length === 0 && (
+            {chipFiltered.length === 0 && (
               <tr>
                 <td colSpan={8} className="text-center py-12 text-p-muted">
                   Aún no hay datos de precios para este periodo
@@ -484,7 +614,7 @@ function ProfitPoolTab({ filters }: { filters: string }) {
                   <td className="text-right text-p-blue font-semibold">{i.pesoProfitPool}%</td>
                   <td className="text-right text-p-gray-light">${i.pvpSugerido.toLocaleString()}</td>
                   <td className="text-right">
-                    <DesviacionBadge value={i.desviacionActual} />
+                    <SeverityBadge value={i.desviacionActual - 100} />
                   </td>
                   <td className="text-center">
                     <PrioridadBadge value={i.prioridad} />

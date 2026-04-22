@@ -1,8 +1,51 @@
 import { useState, useRef, useCallback } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { Upload, FileSpreadsheet, CheckCircle2, AlertCircle, ChevronDown, ChevronUp, Clock } from 'lucide-react'
+import * as XLSX from 'xlsx'
+import { Upload, FileSpreadsheet, CheckCircle2, AlertCircle, ChevronDown, ChevronUp, Clock, UploadCloud, X } from 'lucide-react'
 import api from '../lib/api'
 import type { CargaResult, CargaHistorialRow } from '../lib/types'
+import EmptyState from '../components/EmptyState'
+
+const REQUIRED_COLUMNS: Record<UploadType, string[]> = {
+  skus: ['Código SKU', 'Nombre', 'Marca', 'Categoría', 'PVP Sugerido', 'Costo Variable'],
+  competidores: ['Código SKU Cliente', 'Nombre Competidor', 'Producto Competidor', 'Precio', 'Retailer'],
+}
+
+function parseFirstRow(file: File): Promise<string[]> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = (e) => {
+      try {
+        const data = new Uint8Array(e.target?.result as ArrayBuffer)
+        const wb = XLSX.read(data, { type: 'array', sheetRows: 1 })
+        const ws = wb.Sheets[wb.SheetNames[0]]
+        const rows = XLSX.utils.sheet_to_json<string[]>(ws, { header: 1 })
+        resolve((rows[0] as string[] | undefined) ?? [])
+      } catch {
+        reject(new Error('No se pudo leer el archivo'))
+      }
+    }
+    reader.onerror = () => reject(new Error('Error al leer el archivo'))
+    reader.readAsArrayBuffer(file)
+  })
+}
+
+interface ColumnPreview {
+  file: File
+  foundColumns: string[]
+}
+
+function timeAgo(dateStr: string): string {
+  const diff = Date.now() - new Date(dateStr).getTime()
+  const mins = Math.floor(diff / 60000)
+  if (mins < 60) return `hace ${mins} minuto${mins !== 1 ? 's' : ''}`
+  const hrs = Math.floor(mins / 60)
+  if (hrs < 24) return `hace ${hrs} hora${hrs !== 1 ? 's' : ''}`
+  const days = Math.floor(hrs / 24)
+  if (days < 7) return `hace ${days} día${days !== 1 ? 's' : ''}`
+  const weeks = Math.floor(days / 7)
+  return `hace ${weeks} semana${weeks !== 1 ? 's' : ''}`
+}
 
 type UploadType = 'skus' | 'competidores'
 
@@ -14,13 +57,13 @@ export default function IngestaPage() {
         <UploadZone
           type="skus"
           title="SKUs y Precios"
-          description="Código SKU, Nombre, Marca, Categoría, PVP Sugerido, Costo Variable"
+          description="Código SKU · Nombre · Marca · Categoría · PVP Sugerido · Costo Variable"
           endpoint="/ingesta/upload/skus"
         />
         <UploadZone
           type="competidores"
           title="Precios de Competidores"
-          description="Código SKU Cliente, Nombre Competidor, Producto Competidor, Precio, Retailer"
+          description="Código SKU Cliente · Nombre Competidor · Producto Competidor · Precio · Retailer"
           endpoint="/ingesta/upload/competidores"
         />
       </div>
@@ -42,8 +85,14 @@ function UploadZone({ type, title, description, endpoint }: {
   const [uploading, setUploading] = useState(false)
   const [result, setResult] = useState<CargaResult | null>(null)
   const [showErrors, setShowErrors] = useState(false)
+  const [preview, setPreview] = useState<ColumnPreview | null>(null)
+
+  const required = REQUIRED_COLUMNS[type]
 
   const handleFile = useCallback(async (file: File) => {
+    setResult(null)
+    setShowErrors(false)
+
     if (!file.name.endsWith('.xlsx')) {
       setResult({ totalProcesados: 0, totalErrores: 1, errores: [{ fila: 0, columna: null, mensaje: 'Solo se aceptan archivos .xlsx' }] })
       return
@@ -54,6 +103,16 @@ function UploadZone({ type, title, description, endpoint }: {
       return
     }
 
+    try {
+      const cols = await parseFirstRow(file)
+      setPreview({ file, foundColumns: cols })
+    } catch {
+      setResult({ totalProcesados: 0, totalErrores: 1, errores: [{ fila: 0, columna: null, mensaje: 'No se pudo leer el archivo' }] })
+    }
+  }, [])
+
+  const doUpload = useCallback(async (file: File) => {
+    setPreview(null)
     setUploading(true)
     setResult(null)
 
@@ -96,10 +155,71 @@ function UploadZone({ type, title, description, endpoint }: {
           <FileSpreadsheet className="w-5 h-5 text-p-lime" />
           {title}
         </h3>
-        <p className="text-xs text-p-muted mt-1">Columnas esperadas: {description}</p>
+        <p className="text-xs text-p-muted mt-1">Tu archivo debe incluir estas columnas: <span className="text-p-gray-light">{description}</span></p>
       </div>
 
+      {/* Column preview panel */}
+      {preview && (() => {
+        const normalizeCol = (s: string) => s.trim().toLowerCase()
+        const foundNorm = preview.foundColumns.map(normalizeCol)
+        const matched = required.filter(r => foundNorm.includes(normalizeCol(r)))
+        const missing = required.filter(r => !foundNorm.includes(normalizeCol(r)))
+        const allFound = missing.length === 0
+
+        return (
+          <div className="rounded-xl border border-p-border bg-white/5 p-5 space-y-4">
+            <div className="flex items-start justify-between">
+              <div>
+                <p className="text-sm font-semibold text-white">Validación de columnas</p>
+                <p className="text-xs text-p-muted mt-0.5">{preview.file.name}</p>
+              </div>
+              <button onClick={() => setPreview(null)} className="text-p-muted hover:text-white">
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="space-y-1.5">
+              {required.map(col => {
+                const found = foundNorm.includes(normalizeCol(col))
+                return (
+                  <div key={col} className="flex items-center justify-between text-xs">
+                    <span className="text-p-gray-light">{col}</span>
+                    {found ? (
+                      <span className="flex items-center gap-1 text-green-400"><CheckCircle2 size={12} /> Encontrada</span>
+                    ) : (
+                      <span className="flex items-center gap-1 text-red-400"><AlertCircle size={12} /> Faltante</span>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+
+            <div className={`text-xs font-medium px-3 py-2 rounded-lg ${allFound ? 'bg-green-900/30 text-green-300' : 'bg-red-900/30 text-red-300'}`}>
+              {matched.length} de {required.length} columnas encontradas
+              {!allFound && <span className="block text-red-400 mt-0.5">Faltan: {missing.join(', ')}</span>}
+            </div>
+
+            <div className="flex gap-2">
+              <button
+                onClick={() => { setPreview(null); inputRef.current?.click() }}
+                className="px-3 py-1.5 text-xs border border-p-border rounded-lg text-p-muted hover:text-white transition-colors"
+              >
+                Cambiar archivo
+              </button>
+              <button
+                onClick={() => doUpload(preview.file)}
+                disabled={!allFound}
+                className="flex-1 px-3 py-1.5 text-xs bg-p-lime/20 text-p-lime border border-p-lime/30 rounded-lg hover:bg-p-lime/30 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                Confirmar y cargar
+              </button>
+            </div>
+          </div>
+        )
+      })()}
+
       {/* Drop zone */}
+      {!preview && (
       <div
         onDragOver={(e) => { e.preventDefault(); setIsDragOver(true) }}
         onDragLeave={() => setIsDragOver(false)}
@@ -121,12 +241,21 @@ function UploadZone({ type, title, description, endpoint }: {
           <div className="flex flex-col items-center gap-3">
             <Upload className={`w-8 h-8 ${isDragOver ? 'text-p-lime' : 'text-p-muted'}`} />
             <div>
-              <p className="text-sm text-white">Arrastra un archivo .xlsx aquí</p>
-              <p className="text-xs text-p-muted mt-1">o haz clic para seleccionar (máx. 5MB)</p>
+              <p className="text-sm text-white">Arrastra tu archivo aquí, o haz clic para buscarlo</p>
+              <p className="text-xs text-p-muted mt-1">Formato .xlsx · máximo 5 MB</p>
             </div>
           </div>
         )}
       </div>
+      )}
+
+      {/* Uploading indicator (shown when preview is confirmed and uploading) */}
+      {uploading && (
+        <div className="flex flex-col items-center gap-3 py-6">
+          <div className="animate-spin rounded-full h-8 w-8 border-2 border-p-lime border-t-transparent" />
+          <p className="text-sm text-p-muted">Procesando archivo...</p>
+        </div>
+      )}
 
       {/* Result */}
       {result && (
@@ -202,7 +331,11 @@ function HistorialSection() {
           <div className="animate-spin rounded-full h-6 w-6 border-2 border-p-lime border-t-transparent" />
         </div>
       ) : historial.length === 0 ? (
-        <div className="text-center py-8 text-p-muted text-sm">No hay cargas registradas</div>
+        <EmptyState
+          icon={UploadCloud}
+          title="Todavía no has cargado archivos"
+          description="Sube tu catálogo de productos para que los demás módulos empiecen a funcionar."
+        />
       ) : (
         <table className="w-full text-sm">
           <thead>
@@ -219,15 +352,23 @@ function HistorialSection() {
           <tbody>
             {historial.map(row => (
               <tr key={row.id} className="border-b border-p-border/50">
-                <td className="py-3 px-4 text-p-muted">
-                  {new Date(row.fechaCarga).toLocaleDateString('es-CO', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                <td className="py-3 px-4 text-p-muted" title={new Date(row.fechaCarga).toLocaleString('es-CO')}>
+                  {timeAgo(row.fechaCarga)}
                 </td>
                 <td className="py-3 px-4 text-white capitalize">{row.tipoArchivo}</td>
                 <td className="py-3 px-4 text-p-muted text-xs">{row.nombreArchivo}</td>
                 <td className="py-3 px-4 text-center">
-                  <EstadoBadge estado={row.estado} />
+                  <div className="flex flex-col items-center gap-1">
+                    <EstadoBadge estado={row.estado} />
+                    {row.estado === 'completado_con_errores' && (
+                      <button className="text-xs text-p-blue hover:underline">Ver errores</button>
+                    )}
+                  </div>
                 </td>
-                <td className="py-3 px-4 text-right text-white">{row.registrosProcesados}</td>
+                <td className="py-3 px-4 text-right">
+                  <div className="text-white">{row.registrosProcesados}</div>
+                  <div className="text-xs text-p-muted">{row.registrosProcesados} cargados</div>
+                </td>
                 <td className="py-3 px-4 text-right">
                   {row.totalErrores > 0 ? (
                     <span className="text-yellow-300">{row.totalErrores}</span>

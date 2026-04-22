@@ -106,7 +106,14 @@ export default function ClientLayout() {
               {currentPage?.label || 'Dashboard'}
             </h2>
             <p className="text-sm text-p-muted mt-1">
-              Monitoreo de precios sugeridos vs reales en Retailers
+              {({
+                '/':            'Verifica que tus precios se están respetando en cada punto de venta',
+                '/competencia': 'Compara tus precios con los de la competencia en los mismos retailers',
+                '/pricing':     'Recibe recomendaciones de precio basadas en tu posición competitiva',
+                '/elasticidad': 'Simula cómo cambian tus ventas si ajustas el precio de un producto',
+                '/listas':      'Genera y exporta listas de precios por canal: mayorista, retail y TAT',
+                '/ingesta':     'Carga tus archivos de productos y precios de competidores para comenzar',
+              } as Record<string, string>)[location.pathname] ?? ''}
             </p>
           </div>
           <div className="flex items-center gap-3">
