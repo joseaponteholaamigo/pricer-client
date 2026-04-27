@@ -1,67 +1,74 @@
-import { useState, useEffect } from 'react'
+import { Fragment, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import Plot from '../lib/plotly'
 import { TrendingUp, TrendingDown, AlertTriangle, Box, Store } from 'lucide-react'
 import api from '../lib/api'
+import { fmtCOP } from '../lib/format'
 import SeverityBadge from '../components/SeverityBadge'
+import SearchableSelect from '../components/SearchableSelect'
 import Drawer from '../components/Drawer'
 import SearchInput from '../components/SearchInput'
 import { useTableSearch } from '../components/useTableSearch'
-import type { DashboardKpis, BrandExecution, DetailRow, ProfitPoolItem } from '../lib/types'
+import type { DashboardKpis, BrandExecution, DetailRow, ProfitPoolItem, PivotResponse } from '../lib/types'
+import { SkeletonKpiCards, SkeletonTable } from '../components/Skeleton'
+import QueryErrorState from '../components/QueryErrorState'
+import { CATEGORIAS } from '../shared/catalog'
 
+// Tab type — profit-pool ocultado en la barra de navegación
 type Tab = 'dashboard' | 'detalle' | 'profit-pool'
 
 export default function EjecucionPage() {
   const [tab, setTab] = useState<Tab>('dashboard')
   const [marca, setMarca] = useState('')
   const [retailer, setRetailer] = useState('')
-  const [sku, setSku] = useState('')
+  const [categoria, setCategoria] = useState('')
   const [fechaDesde, setFechaDesde] = useState('')
   const [fechaHasta, setFechaHasta] = useState('')
 
   const { data: filterOptions } = useQuery({
     queryKey: ['execution-filters'],
     queryFn: () => api.get<{ marcas: string[]; retailers: string[] }>('/execution/filters').then(r => r.data),
+    staleTime: 5 * 60_000,
   })
 
   const filters = [
     marca      && `marca=${marca}`,
     retailer   && `retailer=${retailer}`,
-    sku        && `sku=${encodeURIComponent(sku)}`,
+    categoria  && `categoria=${categoria}`,
     fechaDesde && `fechaDesde=${fechaDesde}`,
     fechaHasta && `fechaHasta=${fechaHasta}`,
   ].filter(Boolean).join('&')
+
+  const marcaOptions = (filterOptions?.marcas ?? []).map(m => ({ value: m, label: m }))
+  const retailerOptions = (filterOptions?.retailers ?? []).map(r => ({ value: r, label: r }))
 
   return (
     <div>
       {/* Filters row */}
       <div className="flex items-center gap-3 mb-6 flex-wrap">
-        <select
+        <SearchableSelect
+          options={marcaOptions}
           value={marca}
-          onChange={(e) => setMarca(e.target.value)}
-          className="glass-select"
-        >
-          <option value="">Todas las marcas</option>
-          {filterOptions?.marcas.map(m => (
-            <option key={m} value={m}>{m}</option>
-          ))}
-        </select>
-        <select
+          onChange={setMarca}
+          placeholder="Todas las marcas"
+          clearLabel="Todas las marcas"
+          aria-label="Filtrar por marca"
+        />
+        <SearchableSelect
+          options={retailerOptions}
           value={retailer}
-          onChange={(e) => setRetailer(e.target.value)}
-          className="glass-select"
-        >
-          <option value="">Todos los retailers</option>
-          {filterOptions?.retailers.map(r => (
-            <option key={r} value={r}>{r}</option>
-          ))}
-        </select>
-        <input
-          type="text"
-          placeholder="Buscar SKU…"
-          value={sku}
-          onChange={e => setSku(e.target.value)}
-          className="glass-select w-40"
+          onChange={setRetailer}
+          placeholder="Todos los retailers"
+          clearLabel="Todos los retailers"
+          aria-label="Filtrar por retailer"
+        />
+        <SearchableSelect
+          options={CATEGORIAS.map(c => ({ value: c.value, label: c.label }))}
+          value={categoria}
+          onChange={setCategoria}
+          placeholder="Todas las categorías"
+          clearLabel="Todas las categorías"
+          aria-label="Filtrar por categoría"
         />
         <input
           type="date"
@@ -69,6 +76,7 @@ export default function EjecucionPage() {
           onChange={e => setFechaDesde(e.target.value)}
           className="glass-select w-36"
           title="Desde"
+          aria-label="Fecha desde"
         />
         <input
           type="date"
@@ -76,12 +84,17 @@ export default function EjecucionPage() {
           onChange={e => setFechaHasta(e.target.value)}
           className="glass-select w-36"
           title="Hasta"
+          aria-label="Fecha hasta"
         />
       </div>
 
-      {/* Sub-tabs */}
+      {/* Sub-tabs — profit-pool oculto (diferido) */}
       <div className="flex gap-4 border-b border-p-border mb-6">
-        {([['dashboard', 'Dashboard'], ['detalle', 'Detalle por producto'], ['profit-pool', 'Priorizar por margen']] as const).map(([key, label]) => (
+        {([
+          ['dashboard', 'Dashboard'],
+          ['detalle', 'Detalle por producto'],
+          // TODO: reactivar Priorizar por margen — diferido
+        ] as const).map(([key, label]) => (
           <button
             key={key}
             onClick={() => setTab(key)}
@@ -92,9 +105,9 @@ export default function EjecucionPage() {
         ))}
       </div>
 
-      {tab === 'dashboard' && <DashboardTab filters={filters} />}
-      {tab === 'detalle' && <DetalleTab filters={filters} />}
-      {tab === 'profit-pool' && <ProfitPoolTab filters={filters} />}
+      {tab === 'dashboard' && <DashboardTab key={filters} filters={filters} />}
+      {tab === 'detalle' && <DetalleTab key={filters} filters={filters} />}
+      {tab === 'profit-pool' && <ProfitPoolTab key={filters} filters={filters} />}
     </div>
   )
 }
@@ -105,30 +118,43 @@ function DashboardTab({ filters }: { filters: string }) {
   const [brandPage, setBrandPage] = useState(1)
   const [drawerMarca, setDrawerMarca] = useState<BrandExecution | null>(null)
 
-  useEffect(() => { setBrandPage(1) }, [filters])
-
-  const { data: kpis, isLoading: kpisLoading } = useQuery({
+  const { data: kpis, isLoading: kpisLoading, isError: kpisError, refetch: refetchKpis } = useQuery({
     queryKey: ['execution-dashboard', filters],
     queryFn: () => api.get<DashboardKpis>(`/execution/dashboard?${filters}`).then(r => r.data),
+    staleTime: 2 * 60_000,
   })
 
   const { data: brandsRaw = [] } = useQuery({
     queryKey: ['execution-brand', filters],
     queryFn: () => api.get<BrandExecution[]>(`/execution/brand?${filters}`).then(r => r.data),
+    staleTime: 2 * 60_000,
   })
-  const brands = [...brandsRaw].sort((a, b) =>
-    Math.abs(b.desviacionPct - 100) - Math.abs(a.desviacionPct - 100)
-  )
+
+  // Ordenar descendente: mayor índice de ejecución primero
+  const brands = [...brandsRaw].sort((a, b) => b.desviacionPct - a.desviacionPct)
 
   if (kpisLoading) {
     return (
-      <div className="flex justify-center py-20">
-        <div className="animate-spin rounded-full h-8 w-8 border-2 border-p-lime border-t-transparent" />
+      <div className="space-y-6">
+        <SkeletonKpiCards count={4} />
+        <div className="glass-panel p-6 space-y-3" aria-hidden="true">
+          <div className="animate-pulse bg-white/10 rounded-lg h-4 w-1/4" />
+          <div className="animate-pulse bg-white/10 rounded-lg h-48 w-full" />
+        </div>
+      </div>
+    )
+  }
+
+  if (kpisError) {
+    return (
+      <div className="glass-panel">
+        <QueryErrorState onRetry={refetchKpis} message="No se pudo cargar el dashboard de ejecución." />
       </div>
     )
   }
 
   const desviacion = kpis?.desviacionPromedio ?? 100
+  const indice = desviacion / 100
   const desviacionDiff = desviacion - 100
 
   return (
@@ -136,13 +162,13 @@ function DashboardTab({ filters }: { filters: string }) {
       {/* KPI Cards - 4 columns */}
       <div className="grid grid-cols-4 gap-5">
         <KpiCard
-          label="Índice de Ejecución"
-          value={String(desviacion)}
+          label="Marca por Índice de ejecución de precios"
+          value={indice.toFixed(1)}
           icon={desviacionDiff >= 0 ? TrendingUp : TrendingDown}
           color={Math.abs(desviacionDiff) <= 5 ? 'text-p-lime' : 'text-p-red'}
           sub={desviacionDiff === 0
             ? 'En línea con el precio sugerido'
-            : `${desviacionDiff > 0 ? '+' : ''}${desviacionDiff.toFixed(0)}% ${desviacionDiff > 0 ? 'por encima del sugerido' : 'por debajo del sugerido'}`}
+            : `${desviacionDiff > 0 ? '+' : ''}${desviacionDiff.toFixed(1)}% ${desviacionDiff > 0 ? 'por encima del sugerido' : 'por debajo del sugerido'}`}
           subColor={Math.abs(desviacionDiff) <= 5 ? 'text-p-lime' : 'text-p-red'}
         />
         <KpiCard
@@ -150,7 +176,7 @@ function DashboardTab({ filters }: { filters: string }) {
           value={String(kpis?.totalSkus ?? 0)}
           icon={Box}
           color="text-p-blue"
-          sub={`— Cobertura del 100%`}
+          sub="Cobertura del 100%"
           subColor="text-p-muted"
         />
         <KpiCard
@@ -183,7 +209,7 @@ function DashboardTab({ filters }: { filters: string }) {
           <>
             <div className="glass-panel p-6">
               <div className="flex items-center justify-between mb-4">
-                <h3 className="text-base font-semibold text-white">Cumplimiento de precio sugerido por marca</h3>
+                <h3 className="text-base font-semibold text-white">Marca por Índice de ejecución de precios</h3>
                 {brands.length > BRAND_PAGE_SIZE && (
                   <span className="text-xs text-p-muted">{brandPage} / {brandTotalPages} — {brands.length} marcas</span>
                 )}
@@ -192,7 +218,7 @@ function DashboardTab({ filters }: { filters: string }) {
                 data={[
                   {
                     x: pagedBrands.map(b => b.marca),
-                    y: pagedBrands.map(b => b.desviacionPct),
+                    y: pagedBrands.map(b => b.desviacionPct / 100),
                     type: 'bar',
                     marker: {
                       color: pagedBrands.map(b => {
@@ -201,10 +227,10 @@ function DashboardTab({ filters }: { filters: string }) {
                       }),
                       borderRadius: 4,
                     },
-                    text: pagedBrands.map(b => `${b.desviacionPct}`),
+                    text: pagedBrands.map(b => (b.desviacionPct / 100).toFixed(1)),
                     textposition: 'outside' as const,
                     textfont: { color: '#D5D5D7', size: 12 },
-                    hovertemplate: '%{x}<br>Índice de Ejecución: %{y}<extra></extra>',
+                    hovertemplate: '%{x}<br>Índice de Ejecución: %{y:.1f}<extra></extra>',
                   },
                 ]}
                 layout={{
@@ -220,20 +246,21 @@ function DashboardTab({ filters }: { filters: string }) {
                   yaxis: {
                     color: '#8e919e',
                     gridcolor: 'rgba(255,255,255,0.05)',
-                    range: [80, 120],
+                    range: [0.80, 1.20],
+                    tickformat: '.1f',
                   },
                   shapes: [{
                     type: 'line',
                     x0: -0.5,
                     x1: pagedBrands.length - 0.5,
-                    y0: 100,
-                    y1: 100,
+                    y0: 1.0,
+                    y1: 1.0,
                     line: { color: 'rgba(255,255,255,0.5)', width: 1, dash: 'dash' },
                   }],
                   annotations: [{
                     x: pagedBrands.length - 0.5,
-                    y: 100,
-                    text: 'Sugerido (100)',
+                    y: 1.0,
+                    text: 'Sugerido (1.0)',
                     showarrow: false,
                     font: { size: 11, color: 'rgba(255,255,255,0.6)' },
                     xanchor: 'right',
@@ -250,9 +277,10 @@ function DashboardTab({ filters }: { filters: string }) {
               </div>
             </div>
 
+            {/* Tabla: Detalle de Ejecución por Marca y Retailer */}
             <div className="glass-panel overflow-hidden">
               <div className="px-6 py-4 border-b border-p-border flex items-center justify-between">
-                <h3 className="text-base font-semibold text-white">Detalle de Ejecución por SKU y Retailer</h3>
+                <h3 className="text-base font-semibold text-white">Detalle de Ejecución por Marca y Retailer</h3>
               </div>
               <table className="data-table">
                 <thead>
@@ -261,15 +289,15 @@ function DashboardTab({ filters }: { filters: string }) {
                     <th style={{ width: '20%' }} className="text-right">PVP Sugerido Prom.</th>
                     <th style={{ width: '25%' }} className="text-right">Precio Observado Prom.</th>
                     <th style={{ width: '20%' }} className="text-right">Desviación</th>
-                    <th style={{ width: '15%' }} className="text-right">SKUs</th>
+                    <th style={{ width: '15%' }} className="text-right">Productos</th>
                   </tr>
                 </thead>
                 <tbody>
                   {pagedBrands.map(b => (
                     <tr key={b.marca} className="cursor-pointer" onClick={() => setDrawerMarca(b)}>
                       <td className="font-medium text-white" title={b.marca}>{b.marca}</td>
-                      <td className="text-right text-p-gray-light">${b.pvpSugeridoPromedio.toLocaleString()}</td>
-                      <td className="text-right text-p-gray-light">${b.precioObservadoPromedio.toLocaleString()}</td>
+                      <td className="text-right text-p-gray-light">{fmtCOP(b.pvpSugeridoPromedio)}</td>
+                      <td className="text-right text-p-gray-light">{fmtCOP(b.precioObservadoPromedio)}</td>
                       <td className="text-right">
                         <SeverityBadge value={b.desviacionPct - 100} />
                       </td>
@@ -311,7 +339,7 @@ function DashboardTab({ filters }: { filters: string }) {
       <Drawer
         isOpen={!!drawerMarca}
         title={drawerMarca?.marca ?? ''}
-        subtitle={drawerMarca ? `${drawerMarca.skuCount} productos · índice de ejecución: ${drawerMarca.desviacionPct.toFixed(1)}%` : undefined}
+        subtitle={drawerMarca ? `${drawerMarca.skuCount} productos · índice de ejecución: ${(drawerMarca.desviacionPct / 100).toFixed(1)}` : undefined}
         onClose={() => setDrawerMarca(null)}
       >
         {drawerMarca && <MarcaDrawerContent marca={drawerMarca} filters={filters} />}
@@ -321,13 +349,22 @@ function DashboardTab({ filters }: { filters: string }) {
 }
 
 function MarcaDrawerContent({ marca, filters }: { marca: BrandExecution; filters: string }) {
-  const { data: rows = [], isLoading } = useQuery({
+  const { data: rows = [], isLoading, isError, refetch } = useQuery({
     queryKey: ['execution-detail-marca', marca.marca, filters],
     queryFn: () => api.get<DetailRow[]>(`/execution/detail?${filters}&marca=${encodeURIComponent(marca.marca)}&pageSize=50`).then(r => r.data),
+    staleTime: 2 * 60_000,
   })
 
   if (isLoading) {
-    return <div className="flex justify-center py-10"><div className="animate-spin rounded-full h-6 w-6 border-2 border-p-lime border-t-transparent" /></div>
+    return (
+      <table className="w-full text-sm" aria-hidden="true">
+        <tbody><SkeletonTable rows={5} columns={5} /></tbody>
+      </table>
+    )
+  }
+
+  if (isError) {
+    return <QueryErrorState onRetry={refetch} message="No se pudo cargar el detalle de la marca." />
   }
 
   return (
@@ -348,8 +385,8 @@ function MarcaDrawerContent({ marca, filters }: { marca: BrandExecution; filters
               <div className="text-white text-xs font-medium">{r.nombre}</div>
               <div className="text-p-muted text-xs">{r.codigoSku}</div>
             </td>
-            <td className="py-2 px-3 text-right text-p-muted text-xs">${r.pvpSugerido.toLocaleString()}</td>
-            <td className="py-2 px-3 text-right text-p-muted text-xs">${r.precioObservado.toLocaleString()}</td>
+            <td className="py-2 px-3 text-right text-p-muted text-xs">{fmtCOP(r.pvpSugerido)}</td>
+            <td className="py-2 px-3 text-right text-p-muted text-xs">{fmtCOP(r.precioObservado)}</td>
             <td className="py-2 px-3 text-right"><SeverityBadge value={r.desviacionPct - 100} /></td>
             <td className="py-2 px-3 text-p-muted text-xs">{r.retailer}</td>
           </tr>
@@ -368,9 +405,13 @@ function DetalleTab({ filters }: { filters: string }) {
   const [page, setPage] = useState(1)
   const [chip, setChip] = useState<DetalleChip>('todos')
 
-  useEffect(() => { setPage(1) }, [filters])
+  const { data: pivotData, isLoading: pivotLoading, isError: pivotError, refetch: pivotRefetch } = useQuery({
+    queryKey: ['execution-pivot', filters],
+    queryFn: () => api.get<PivotResponse>(`/execution/pivot?${filters}`).then(r => r.data),
+    staleTime: 2 * 60_000,
+  })
 
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError, refetch } = useQuery({
     queryKey: ['execution-detail', filters, page],
     queryFn: async () => {
       const res = await api.get<DetailRow[]>(`/execution/detail?${filters}&page=${page}&pageSize=25`)
@@ -379,6 +420,7 @@ function DetalleTab({ filters }: { filters: string }) {
         total: parseInt(res.headers['x-total-count'] || '0'),
       }
     },
+    staleTime: 2 * 60_000,
   })
 
   const rows = data?.rows ?? []
@@ -400,18 +442,105 @@ function DetalleTab({ filters }: { filters: string }) {
     'criticos': 'Críticos (>5%)',
   }
 
-  if (isLoading) {
+  if (isLoading || pivotLoading) {
     return (
-      <div className="flex justify-center py-20">
-        <div className="animate-spin rounded-full h-8 w-8 border-2 border-p-lime border-t-transparent" />
+      <div className="space-y-6">
+        <div className="glass-panel overflow-x-auto">
+          <table className="data-table">
+            <tbody><SkeletonTable rows={10} columns={5} /></tbody>
+          </table>
+        </div>
       </div>
     )
   }
 
+  if (isError) {
+    return (
+      <div className="glass-panel">
+        <QueryErrorState onRetry={refetch} message="No se pudo cargar el detalle de ejecución." />
+      </div>
+    )
+  }
+
+  const retailers = pivotData?.retailers ?? []
+  const pivotRows = pivotData?.rows ?? []
+
   return (
-    <div>
-      {/* Search + chips */}
-      <div className="flex items-center gap-3 mb-4 flex-wrap">
+    <div className="space-y-6">
+      {/* Tabla pivot: Detalle por producto */}
+      <div className="glass-panel overflow-hidden">
+        <div className="px-6 py-4 border-b border-p-border">
+          <h3 className="text-base font-semibold text-white">Detalle por producto</h3>
+        </div>
+        {pivotError ? (
+          <div className="p-6">
+            <QueryErrorState onRetry={pivotRefetch} message="No se pudo cargar la tabla de detalle por producto." />
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="data-table" style={{ minWidth: `${400 + retailers.length * 180}px` }}>
+              <thead>
+                <tr>
+                  <th rowSpan={2} style={{ width: 220 }}>Producto</th>
+                  {retailers.map(ret => (
+                    <th key={ret} colSpan={2} className="text-center border-l border-p-border/30" style={{ width: 180 }}>
+                      {ret}
+                    </th>
+                  ))}
+                </tr>
+                <tr>
+                  {retailers.map(ret => (
+                    <Fragment key={ret}>
+                      <th className="text-right border-l border-p-border/30 text-p-muted font-normal text-xs py-1">
+                        P. Obs.
+                      </th>
+                      <th className="text-right text-p-muted font-normal text-xs py-1">
+                        Desv.
+                      </th>
+                    </Fragment>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {pivotRows.map(row => (
+                  <tr key={row.skuId}>
+                    <td>
+                      <div className="font-medium text-white text-sm truncate max-w-[200px]" title={row.nombre}>{row.nombre}</div>
+                      <div className="text-p-muted text-xs">{row.marca}</div>
+                    </td>
+                    {retailers.map(ret => {
+                      const cell = row.retailers[ret]
+                      return (
+                        <Fragment key={`${row.skuId}-${ret}`}>
+                          <td className="text-right border-l border-p-border/30 text-p-gray-light text-xs">
+                            {cell?.precioObservado != null ? fmtCOP(cell.precioObservado) : '—'}
+                          </td>
+                          <td className="text-right text-xs">
+                            {cell?.desviacionPct != null
+                              ? <SeverityBadge value={cell.desviacionPct} />
+                              : <span className="text-p-muted">—</span>
+                            }
+                          </td>
+                        </Fragment>
+                      )
+                    })}
+                  </tr>
+                ))}
+                {pivotRows.length === 0 && (
+                  <tr>
+                    <td colSpan={1 + retailers.length * 2} className="text-center py-12 text-p-muted">
+                      Aún no hay datos de precios para este periodo
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {/* Búsqueda + chips para la tabla lineal */}
+      <div className="flex items-center gap-3 flex-wrap">
         <SearchInput value={search} onChange={setSearch} placeholder="Buscar producto o código..." />
         {(Object.keys(chipLabels) as DetalleChip[]).map(c => (
           <button
@@ -428,7 +557,11 @@ function DetalleTab({ filters }: { filters: string }) {
         ))}
       </div>
 
+      {/* Tabla lineal paginada */}
       <div className="glass-panel overflow-hidden">
+        <div className="px-6 py-4 border-b border-p-border">
+          <h3 className="text-base font-semibold text-white">Listado de precios observados</h3>
+        </div>
         <table className="data-table">
           <thead>
             <tr>
@@ -448,9 +581,9 @@ function DetalleTab({ filters }: { filters: string }) {
                 <td className="font-mono text-p-muted text-xs" title={r.codigoSku}>{r.codigoSku}</td>
                 <td className="font-medium text-white" title={r.nombre}>{r.nombre}</td>
                 <td className="text-p-gray-light" title={r.marca}>{r.marca}</td>
-                <td className="text-right text-p-lime font-semibold">${r.pvpSugerido.toLocaleString()}</td>
+                <td className="text-right text-p-lime font-semibold">{fmtCOP(r.pvpSugerido)}</td>
                 <td className="text-p-gray-light">{r.retailer}</td>
-                <td className="text-right text-white font-semibold">${r.precioObservado.toLocaleString()}</td>
+                <td className="text-right text-white font-semibold">{fmtCOP(r.precioObservado)}</td>
                 <td className="text-right">
                   <SeverityBadge value={r.desviacionPct - 100} />
                 </td>
@@ -502,17 +635,32 @@ const PROFIT_CHART_TOP = 15
 function ProfitPoolTab({ filters }: { filters: string }) {
   const [page, setPage] = useState(1)
 
-  useEffect(() => { setPage(1) }, [filters])
-
-  const { data: items = [], isLoading } = useQuery({
+  const { data: items = [], isLoading, isError, refetch } = useQuery({
     queryKey: ['execution-profit-pool', filters],
     queryFn: () => api.get<ProfitPoolItem[]>(`/execution/profit-pool?${filters}`).then(r => r.data),
+    staleTime: 2 * 60_000,
   })
 
   if (isLoading) {
     return (
-      <div className="flex justify-center py-20">
-        <div className="animate-spin rounded-full h-8 w-8 border-2 border-p-lime border-t-transparent" />
+      <div className="space-y-6">
+        <div className="glass-panel p-6 space-y-3" aria-hidden="true">
+          <div className="animate-pulse bg-white/10 rounded-lg h-4 w-1/3" />
+          <div className="animate-pulse bg-white/10 rounded-lg h-48 w-full" />
+        </div>
+        <div className="glass-panel overflow-x-auto">
+          <table className="data-table">
+            <tbody><SkeletonTable rows={8} columns={5} /></tbody>
+          </table>
+        </div>
+      </div>
+    )
+  }
+
+  if (isError) {
+    return (
+      <div className="glass-panel">
+        <QueryErrorState onRetry={refetch} message="No se pudo cargar el Profit Pool." />
       </div>
     )
   }
@@ -612,7 +760,7 @@ function ProfitPoolTab({ filters }: { filters: string }) {
                   <td className="font-medium text-white" title={i.nombre}>{i.nombre}</td>
                   <td className="text-p-gray-light" title={i.marca}>{i.marca}</td>
                   <td className="text-right text-p-blue font-semibold">{i.pesoProfitPool}%</td>
-                  <td className="text-right text-p-gray-light">${i.pvpSugerido.toLocaleString()}</td>
+                  <td className="text-right text-p-gray-light">{fmtCOP(i.pvpSugerido)}</td>
                   <td className="text-right">
                     <SeverityBadge value={i.desviacionActual - 100} />
                   </td>
@@ -650,15 +798,6 @@ function KpiCard({ label, value, icon: Icon, color, sub, subColor, alert }: {
       {sub && <p className={`text-[13px] mt-2 ${subColor || 'text-p-muted'}`}>{sub}</p>}
     </div>
   )
-}
-
-function DesviacionBadge({ value }: { value: number }) {
-  const diff = Math.abs(value - 100)
-  const cls = diff > 5 ? 'badge badge-red'
-    : diff > 3 ? 'badge badge-yellow'
-    : 'badge badge-green'
-
-  return <span className={cls}>{value.toFixed(1)}%</span>
 }
 
 function PrioridadBadge({ value }: { value: string }) {

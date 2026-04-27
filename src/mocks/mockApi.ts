@@ -70,14 +70,15 @@ function handleExecution(path: string, params: URLSearchParams) {
   const subpath = path.replace('execution/', '')
   const filterMarca = params.get('marca') || ''
   const filterRetailer = params.get('retailer') || ''
+  const filterCategoria = params.get('categoria') || ''
 
   const latestFecha = latestDate()
   let precios = store.preciosMercado.filter(p => p.fechaScraping === latestFecha)
   if (filterRetailer) precios = precios.filter(p => p.retailer === filterRetailer)
 
-  const skus = filterMarca
-    ? store.skus.filter(s => s.marca === filterMarca)
-    : store.skus
+  let skus = store.skus
+  if (filterMarca) skus = skus.filter(s => s.marca === filterMarca)
+  if (filterCategoria) skus = skus.filter(s => s.categoria === filterCategoria)
 
   if (subpath === 'filters') {
     return ok({
@@ -167,6 +168,27 @@ function handleExecution(path: string, params: URLSearchParams) {
         return { skuId: sku.id, codigoSku: sku.codigoSku, nombre: sku.nombre, marca: sku.marca, pesoProfitPool: sku.pesoProfitPool, pvpSugerido: sku.pvpSugerido, desviacionActual: desv, prioridad }
       })
     )
+  }
+
+  if (subpath === 'pivot') {
+    const allRetailers = filterRetailer
+      ? [filterRetailer]
+      : [...new Set(store.preciosMercado.map(p => p.retailer))].sort()
+    const rows = skus.map(sku => {
+      const retailerMap: Record<string, { precioObservado: number | null; desviacionPct: number | null }> = {}
+      for (const ret of allRetailers) {
+        const ps = precios.filter(p => p.skuId === sku.id && p.retailer === ret)
+        if (ps.length > 0) {
+          const obs = round2(avg(ps.map(p => p.precioObservado)))
+          const dev = round2((obs - sku.pvpSugerido) / sku.pvpSugerido * 100)
+          retailerMap[ret] = { precioObservado: obs, desviacionPct: dev }
+        } else {
+          retailerMap[ret] = { precioObservado: null, desviacionPct: null }
+        }
+      }
+      return { skuId: sku.id, codigoSku: sku.codigoSku, nombre: sku.nombre, marca: sku.marca, categoria: sku.categoria, pvpSugerido: sku.pvpSugerido, retailers: retailerMap }
+    })
+    return ok({ retailers: allRetailers, rows })
   }
 
   return null
@@ -617,13 +639,21 @@ function route<T>(method: string, rawUrl: string, body?: unknown): Promise<{ dat
 }
 
 // ─── Interfaz pública (compatible con axios) ──────────────────────────────────
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const mockApi: any = {
-  get: <T>(url: string) => route<T>('GET', url),
-  post: <T>(url: string, body?: unknown) => route<T>('POST', url, body),
-  put: <T>(url: string, body?: unknown) => route<T>('PUT', url, body),
-  delete: <T>(url: string) => route<T>('DELETE', url),
-  patch: <T>(url: string, body?: unknown) => route<T>('PATCH', url, body),
+
+export interface ApiClient {
+  get<T = unknown>(url: string, config?: Record<string, unknown>): Promise<{ data: T; headers: Record<string, string> }>
+  post<T = unknown>(url: string, body?: unknown, config?: Record<string, unknown>): Promise<{ data: T; headers: Record<string, string> }>
+  put<T = unknown>(url: string, body?: unknown): Promise<{ data: T; headers: Record<string, string> }>
+  delete<T = unknown>(url: string): Promise<{ data: T; headers: Record<string, string> }>
+  patch<T = unknown>(url: string, body?: unknown): Promise<{ data: T; headers: Record<string, string> }>
+}
+
+const mockApi: ApiClient = {
+  get: <T>(url: string) => route<T>('GET', url) as Promise<{ data: T; headers: Record<string, string> }>,
+  post: <T>(url: string, body?: unknown) => route<T>('POST', url, body) as Promise<{ data: T; headers: Record<string, string> }>,
+  put: <T>(url: string, body?: unknown) => route<T>('PUT', url, body) as Promise<{ data: T; headers: Record<string, string> }>,
+  delete: <T>(url: string) => route<T>('DELETE', url) as Promise<{ data: T; headers: Record<string, string> }>,
+  patch: <T>(url: string, body?: unknown) => route<T>('PATCH', url, body) as Promise<{ data: T; headers: Record<string, string> }>,
 }
 
 export default mockApi

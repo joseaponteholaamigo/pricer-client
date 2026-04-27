@@ -7,8 +7,8 @@ interface SeverityBadgeProps {
 
 export default function SeverityBadge({ value, suffix = '%' }: SeverityBadgeProps) {
   const abs = Math.abs(value)
-  const isCritical = abs > 10
-  const isWarning = abs > 3
+  const isCritical = abs > 5
+  const isWarning = abs > 3 && abs <= 5
 
   const cls = isCritical ? 'badge badge-red' : isWarning ? 'badge badge-yellow' : 'badge badge-green'
   const sign = value > 0 ? '+' : ''

@@ -1,3 +1,5 @@
+// PARITY: este archivo se mantiene en paridad con su gemelo en el otro SPA
+// (prisier-admin ↔ prisier-client). Replica los cambios y corre scripts/check-parity.sh.
 import { Navigate, Outlet } from 'react-router-dom'
 import { useAuth } from '../lib/auth'
 
@@ -11,7 +13,7 @@ export default function ProtectedRoute({ allowedRoles }: Props) {
   if (isLoading) {
     return (
       <div className="min-h-screen flex items-center justify-center">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-prisier-primary" />
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-p-lime" />
       </div>
     )
   }

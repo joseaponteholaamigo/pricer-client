@@ -1,5 +1,8 @@
+// PARITY: este archivo se mantiene en paridad con su gemelo en el otro SPA.
+// Diferencia permitida y normalizada por el script: basename en el redirect post-401
+// (/prisier-admin/login vs /prisier-client/login). Corre scripts/check-parity.sh tras editar.
 import axios from 'axios'
-import mockApi from '../mocks/mockApi'
+import mockApi, { type ApiClient } from '../mocks/mockApi'
 
 const USE_MOCK = import.meta.env.VITE_MOCK_MODE === 'true'
 
@@ -61,14 +64,13 @@ realApi.interceptors.response.use(
         pendingRequests = []
         localStorage.removeItem('access_token')
         localStorage.removeItem('refresh_token')
-        window.location.href = '/login'
+        window.location.href = '/prisier-client/login'
       }
     }
     return Promise.reject(error)
   }
 )
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const api: any = USE_MOCK ? mockApi : realApi
+const api: ApiClient = USE_MOCK ? mockApi : realApi as unknown as ApiClient
 
 export default api

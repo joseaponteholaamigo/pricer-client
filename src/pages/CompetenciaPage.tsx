@@ -3,11 +3,14 @@ import { useQuery } from '@tanstack/react-query'
 import Plot from '../lib/plotly'
 import { TrendingUp, TrendingDown, Users, ArrowUpRight, ArrowDownRight } from 'lucide-react'
 import api from '../lib/api'
+import { fmtCOP } from '../lib/format'
 import SeverityBadge from '../components/SeverityBadge'
 import Drawer from '../components/Drawer'
 import SearchInput from '../components/SearchInput'
 import { useTableSearch } from '../components/useTableSearch'
 import type { CompetitionKpis, BrandComparison, CompetitionDetailRow, ScatterPoint, BoxPlotSeries } from '../lib/types'
+import { SkeletonKpiCards, SkeletonTable } from '../components/Skeleton'
+import QueryErrorState from '../components/QueryErrorState'
 
 type Tab = 'dashboard' | 'detalle' | 'por-marca'
 
@@ -30,7 +33,11 @@ export default function CompetenciaPage() {
     <div>
       {/* Filters row */}
       <div className="flex items-center gap-4 mb-6 flex-wrap">
-        <select value={categoria} onChange={(e) => setCategoria(e.target.value)} className="glass-select">
+        <select
+          value={categoria}
+          onChange={(e) => { setCategoria(e.target.value); setMarca('') }}
+          className="glass-select"
+        >
           <option value="">Todas las categorías</option>
           {filterOptions?.categorias.map(c => <option key={c} value={c}>{c}</option>)}
         </select>
@@ -87,7 +94,7 @@ export default function CompetenciaPage() {
 }
 
 function DashboardTab({ filters }: { filters: string }) {
-  const { data: kpis, isLoading: kpisLoading } = useQuery({
+  const { data: kpis, isLoading: kpisLoading, isError: kpisError, refetch: refetchKpis } = useQuery({
     queryKey: ['competition-dashboard', filters],
     queryFn: () => api.get<CompetitionKpis>(`/competition/dashboard?${filters}`).then(r => r.data),
   })
@@ -104,8 +111,20 @@ function DashboardTab({ filters }: { filters: string }) {
 
   if (kpisLoading) {
     return (
-      <div className="flex justify-center py-20">
-        <div className="animate-spin rounded-full h-8 w-8 border-2 border-p-lime border-t-transparent" />
+      <div className="space-y-6">
+        <SkeletonKpiCards count={4} />
+        <div className="glass-panel p-6 space-y-3" aria-hidden="true">
+          <div className="animate-pulse bg-white/10 rounded-lg h-4 w-1/4" />
+          <div className="animate-pulse bg-white/10 rounded-lg h-52 w-full" />
+        </div>
+      </div>
+    )
+  }
+
+  if (kpisError) {
+    return (
+      <div className="glass-panel">
+        <QueryErrorState onRetry={refetchKpis} message="No se pudo cargar el dashboard de competencia." />
       </div>
     )
   }
@@ -327,7 +346,7 @@ function DetalleTab({ filters }: { filters: string }) {
   const [chip, setChip] = useState<DetalleChip>('todos')
   const [drawerRow, setDrawerRow] = useState<CompetitionDetailRow | null>(null)
 
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError, refetch } = useQuery({
     queryKey: ['competition-detail', filters, page],
     queryFn: async () => {
       const res = await api.get<CompetitionDetailRow[]>(`/competition/detail?${filters}&page=${page}&pageSize=25`)
@@ -346,8 +365,18 @@ function DetalleTab({ filters }: { filters: string }) {
 
   if (isLoading) {
     return (
-      <div className="flex justify-center py-20">
-        <div className="animate-spin rounded-full h-8 w-8 border-2 border-p-lime border-t-transparent" />
+      <div className="glass-panel overflow-x-auto">
+        <table className="data-table">
+          <tbody><SkeletonTable rows={10} columns={8} /></tbody>
+        </table>
+      </div>
+    )
+  }
+
+  if (isError) {
+    return (
+      <div className="glass-panel">
+        <QueryErrorState onRetry={refetch} message="No se pudo cargar el detalle de competencia." />
       </div>
     )
   }
@@ -396,7 +425,7 @@ function DetalleTab({ filters }: { filters: string }) {
           <tbody>
             {chipFiltered.map((r) => {
               const abs = Math.abs(r.diferencialPct)
-              const rowBg = abs > 10
+              const rowBg = abs > 5
                 ? 'rgba(255,107,107,0.06)'
                 : abs > 3 ? 'rgba(245,197,24,0.05)' : undefined
               return (
@@ -409,12 +438,12 @@ function DetalleTab({ filters }: { filters: string }) {
                 <td className="font-mono text-p-muted text-xs" title={r.codigoSku}>{r.codigoSku}</td>
                 <td className="font-medium text-white" title={r.nombre}>{r.nombre}</td>
                 <td className="text-p-gray-light" title={r.marca}>{r.marca}</td>
-                <td className="text-right text-p-blue font-semibold">${r.precioPromedioCliente.toLocaleString()}</td>
+                <td className="text-right text-p-blue font-semibold">{fmtCOP(r.precioPromedioCliente)}</td>
                 <td className="text-p-gray-light">{r.competidorPrincipal}</td>
-                <td className="text-right text-white font-semibold">${r.precioCompetidor.toLocaleString()}</td>
+                <td className="text-right text-white font-semibold">{fmtCOP(r.precioCompetidor)}</td>
                 <td className="text-right">
                   <span className={r.diferencialAbsoluto > 0 ? 'text-p-red' : 'text-p-lime'}>
-                    {r.diferencialAbsoluto > 0 ? '+' : ''}${r.diferencialAbsoluto.toLocaleString()}
+                    {r.diferencialAbsoluto > 0 ? '+' : ''}{fmtCOP(r.diferencialAbsoluto)}
                   </span>
                 </td>
                 <td className="text-right">
@@ -464,7 +493,7 @@ function DetalleTab({ filters }: { filters: string }) {
         isOpen={drawerRow !== null}
         onClose={() => setDrawerRow(null)}
         title={drawerRow?.nombre ?? ''}
-        subtitle={drawerRow ? `${drawerRow.codigoSku} · ${drawerRow.marca} · tu precio: $${drawerRow.precioPromedioCliente.toLocaleString()}` : undefined}
+        subtitle={drawerRow ? `${drawerRow.codigoSku} · ${drawerRow.marca} · tu precio: ${fmtCOP(drawerRow.precioPromedioCliente)}` : undefined}
       >
         {drawerRow && <CompetidorDrawerContent row={drawerRow} />}
       </Drawer>
@@ -506,7 +535,7 @@ function CompetidorDrawerContent({ row }: { row: CompetitionDetailRow }) {
             <tbody>
               <tr>
                 <td className="py-3 px-4 text-white">{row.competidorPrincipal}</td>
-                <td className="py-3 px-4 text-right text-white font-semibold">${row.precioCompetidor.toLocaleString()}</td>
+                <td className="py-3 px-4 text-right text-white font-semibold">{fmtCOP(row.precioCompetidor)}</td>
                 <td className="py-3 px-4 text-right">
                   <SeverityBadge value={row.diferencialPct} />
                 </td>
@@ -523,16 +552,16 @@ function CompetidorDrawerContent({ row }: { row: CompetitionDetailRow }) {
       <div className="space-y-2">
         <div className="flex justify-between text-sm">
           <span className="text-p-muted">Tu precio promedio</span>
-          <span className="text-p-blue font-semibold">${row.precioPromedioCliente.toLocaleString()}</span>
+          <span className="text-p-blue font-semibold">{fmtCOP(row.precioPromedioCliente)}</span>
         </div>
         <div className="flex justify-between text-sm">
           <span className="text-p-muted">Precio competidor</span>
-          <span className="text-white font-semibold">${row.precioCompetidor.toLocaleString()}</span>
+          <span className="text-white font-semibold">{fmtCOP(row.precioCompetidor)}</span>
         </div>
         <div className="flex justify-between text-sm border-t border-p-border pt-2 mt-2">
           <span className="text-p-muted">Diferencia absoluta</span>
           <span className={row.diferencialAbsoluto > 0 ? 'text-p-red font-semibold' : 'text-p-lime font-semibold'}>
-            {row.diferencialAbsoluto > 0 ? '+' : ''}${row.diferencialAbsoluto.toLocaleString()}
+            {row.diferencialAbsoluto > 0 ? '+' : ''}{fmtCOP(row.diferencialAbsoluto)}
           </span>
         </div>
       </div>
@@ -547,15 +576,26 @@ function PorMarcaTab({ filters }: { filters: string }) {
 
   useEffect(() => { setPage(1) }, [filters])
 
-  const { data: brands = [], isLoading } = useQuery({
+  const { data: brands = [], isLoading, isError, refetch } = useQuery({
     queryKey: ['competition-brand', filters],
     queryFn: () => api.get<BrandComparison[]>(`/competition/brand?${filters}`).then(r => r.data),
   })
 
   if (isLoading) {
     return (
-      <div className="flex justify-center py-20">
-        <div className="animate-spin rounded-full h-8 w-8 border-2 border-p-lime border-t-transparent" />
+      <div className="space-y-6">
+        <div className="glass-panel p-6 space-y-3" aria-hidden="true">
+          <div className="animate-pulse bg-white/10 rounded-lg h-4 w-1/3" />
+          <div className="animate-pulse bg-white/10 rounded-lg h-52 w-full" />
+        </div>
+      </div>
+    )
+  }
+
+  if (isError) {
+    return (
+      <div className="glass-panel">
+        <QueryErrorState onRetry={refetch} message="No se pudo cargar la comparativa por marca." />
       </div>
     )
   }
@@ -582,7 +622,7 @@ function PorMarcaTab({ filters }: { filters: string }) {
                 type: 'bar',
                 name: 'Cliente',
                 marker: { color: '#60CAFF' },
-                text: pagedBrands.map(b => `$${b.precioPromedioCliente.toLocaleString()}`),
+                text: pagedBrands.map(b => fmtCOP(b.precioPromedioCliente)),
                 textposition: 'outside' as const,
                 textfont: { color: '#D5D5D7', size: 11 },
               },
@@ -592,7 +632,7 @@ function PorMarcaTab({ filters }: { filters: string }) {
                 type: 'bar',
                 name: 'Competidor Principal',
                 marker: { color: 'rgba(142, 145, 158, 0.6)' },
-                text: pagedBrands.map(b => `$${b.precioPromedioCompetidor.toLocaleString()}`),
+                text: pagedBrands.map(b => fmtCOP(b.precioPromedioCompetidor)),
                 textposition: 'outside' as const,
                 textfont: { color: '#D5D5D7', size: 11 },
               },
@@ -642,8 +682,8 @@ function PorMarcaTab({ filters }: { filters: string }) {
             {pagedBrands.map(b => (
               <tr key={b.marca}>
                 <td className="font-medium text-white" title={b.marca}>{b.marca}</td>
-                <td className="text-right text-p-blue font-semibold">${b.precioPromedioCliente.toLocaleString()}</td>
-                <td className="text-right text-p-gray-light">${b.precioPromedioCompetidor.toLocaleString()}</td>
+                <td className="text-right text-p-blue font-semibold">{fmtCOP(b.precioPromedioCliente)}</td>
+                <td className="text-right text-p-gray-light">{fmtCOP(b.precioPromedioCompetidor)}</td>
                 <td className="text-right">
                   <SeverityBadge value={b.diferencialPct} />
                 </td>
@@ -711,8 +751,8 @@ function KpiCard({ label, value, icon: Icon, color, sub, subColor }: {
 
 function DiferencialBadge({ value }: { value: number }) {
   const abs = Math.abs(value)
-  const cls = abs > 10 ? 'badge badge-red'
-    : abs > 5 ? 'badge badge-yellow'
+  const cls = abs > 5 ? 'badge badge-red'
+    : abs > 3 ? 'badge badge-yellow'
     : 'badge badge-green'
 
   return <span className={cls}>{value > 0 ? '+' : ''}{value.toFixed(1)}%</span>

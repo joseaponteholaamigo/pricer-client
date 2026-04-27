@@ -173,6 +173,28 @@ export interface ListaSkuRow {
   pvpSugerido: number
 }
 
+// Módulo 1 — Pivot SKU × Retailer
+
+export interface PivotCell {
+  precioObservado: number | null
+  desviacionPct: number | null
+}
+
+export interface PivotRow {
+  skuId: string
+  codigoSku: string
+  nombre: string
+  marca: string
+  categoria: string
+  pvpSugerido: number
+  retailers: Record<string, PivotCell>
+}
+
+export interface PivotResponse {
+  retailers: string[]
+  rows: PivotRow[]
+}
+
 // Ingesta de Datos
 
 export interface CargaResult {

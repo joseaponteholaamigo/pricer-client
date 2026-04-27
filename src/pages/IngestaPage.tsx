@@ -1,10 +1,12 @@
 import { useState, useRef, useCallback } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import * as XLSX from 'xlsx'
-import { Upload, FileSpreadsheet, CheckCircle2, AlertCircle, ChevronDown, ChevronUp, Clock, UploadCloud, X } from 'lucide-react'
+import { Upload, FileSpreadsheet, CheckCircle2, AlertCircle, ChevronDown, ChevronUp, Clock, UploadCloud, X, Download } from 'lucide-react'
 import api from '../lib/api'
 import type { CargaResult, CargaHistorialRow } from '../lib/types'
 import EmptyState from '../components/EmptyState'
+import { SkeletonTable } from '../components/Skeleton'
+import QueryErrorState from '../components/QueryErrorState'
 
 const REQUIRED_COLUMNS: Record<UploadType, string[]> = {
   skus: ['Código SKU', 'Nombre', 'Marca', 'Categoría', 'PVP Sugerido', 'Costo Variable'],
@@ -49,9 +51,47 @@ function timeAgo(dateStr: string): string {
 
 type UploadType = 'skus' | 'competidores'
 
+function downloadTemplate(type: 'portafolio' | 'competidores') {
+  const configs = {
+    portafolio: {
+      filename: 'plantilla-portafolio.xlsx',
+      headers: ['Código SKU', 'EAN', 'Nombre', 'Marca', 'Categoría', 'PVP', 'Costo Variable', 'Peso Profit Pool', 'IVA'],
+    },
+    competidores: {
+      filename: 'plantilla-competidores.xlsx',
+      headers: ['EAN Propio', 'EAN Competidor', 'Marca Competidor', 'Retailer', 'PVP Competidor'],
+    },
+  }
+
+  const { filename, headers } = configs[type]
+  const wb = XLSX.utils.book_new()
+  const ws = XLSX.utils.aoa_to_sheet([headers])
+  XLSX.utils.book_append_sheet(wb, ws, 'Plantilla')
+  XLSX.writeFile(wb, filename)
+}
+
 export default function IngestaPage() {
   return (
     <div className="space-y-8">
+      {/* Template downloads */}
+      <div className="flex items-center gap-3 flex-wrap">
+        <span className="text-xs text-p-muted">Descargar plantilla:</span>
+        <button
+          onClick={() => downloadTemplate('portafolio')}
+          className="flex items-center gap-2 px-3 py-1.5 text-xs border border-p-border rounded-lg text-p-gray-light hover:text-white hover:border-p-muted transition-colors"
+        >
+          <Download size={13} />
+          Portafolio (SKU + precios)
+        </button>
+        <button
+          onClick={() => downloadTemplate('competidores')}
+          className="flex items-center gap-2 px-3 py-1.5 text-xs border border-p-border rounded-lg text-p-gray-light hover:text-white hover:border-p-muted transition-colors"
+        >
+          <Download size={13} />
+          Competidores
+        </button>
+      </div>
+
       {/* Upload zones */}
       <div className="grid grid-cols-2 gap-6">
         <UploadZone
@@ -312,7 +352,7 @@ function UploadZone({ type, title, description, endpoint }: {
 /* ──────────────────────────── Historial ──────────────────────────── */
 
 function HistorialSection() {
-  const { data: historial = [], isLoading } = useQuery({
+  const { data: historial = [], isLoading, isError, refetch } = useQuery({
     queryKey: ['ingesta-historial'],
     queryFn: () => api.get<CargaHistorialRow[]>('/ingesta/historial').then(r => r.data),
   })
@@ -327,9 +367,11 @@ function HistorialSection() {
       </div>
 
       {isLoading ? (
-        <div className="flex justify-center py-8">
-          <div className="animate-spin rounded-full h-6 w-6 border-2 border-p-lime border-t-transparent" />
-        </div>
+        <table className="w-full text-sm">
+          <tbody><SkeletonTable rows={4} columns={5} /></tbody>
+        </table>
+      ) : isError ? (
+        <QueryErrorState onRetry={refetch} message="No se pudo cargar el historial de cargas." />
       ) : historial.length === 0 ? (
         <EmptyState
           icon={UploadCloud}

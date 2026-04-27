@@ -5,7 +5,7 @@ import { useAuth } from '../lib/auth'
 const MOCK_MODE = import.meta.env.VITE_MOCK_MODE === 'true'
 
 const DEMO_USERS = [
-  { label: 'Cliente Comercial', email: 'cliente@congrupo.com', password: '123456', role: 'cliente_comercial' },
+  { label: 'Cliente', email: 'cliente@congrupo.com', password: '123456', role: 'cliente' },
 ]
 
 export default function LoginPage() {

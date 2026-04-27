@@ -1,10 +1,11 @@
 import { useState, useEffect } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { Activity, BarChart3, TrendingDown, AlertTriangle, ArrowRight } from 'lucide-react'
-import { useNavigate } from 'react-router-dom'
+import { Activity, BarChart3, TrendingDown, AlertTriangle } from 'lucide-react'
 import api from '../lib/api'
 import type { ElasticidadKpis, ElasticidadSummaryRow, SkuElasticidadDetail } from '../lib/types'
 import Drawer from '../components/Drawer'
+import { SkeletonKpiCards, SkeletonTable } from '../components/Skeleton'
+import QueryErrorState from '../components/QueryErrorState'
 
 export default function ElasticidadPage() {
   const [marca, setMarca] = useState('')
@@ -18,7 +19,6 @@ export default function ElasticidadPage() {
   })
 
   const filters = `marca=${marca}&categoria=${categoria}`
-  const navigate = useNavigate()
 
   const handleSkuClick = (skuId: string, row: ElasticidadSummaryRow) => {
     setDrawerSkuId(skuId)
@@ -46,14 +46,6 @@ export default function ElasticidadPage() {
         title={drawerRow?.nombre ?? ''}
         subtitle={drawerRow ? `Elasticidad: ${drawerRow.coeficiente.toFixed(2)} · ${drawerRow.codigoSku} · ${drawerRow.marca}` : undefined}
         onClose={() => { setDrawerSkuId(null); setDrawerRow(null) }}
-        footer={
-          <button
-            onClick={() => navigate('/listas')}
-            className="btn-primary w-full flex items-center justify-center gap-2 text-sm"
-          >
-            Aplicar este precio en el Generador de Listas <ArrowRight size={14} />
-          </button>
-        }
       >
         {drawerSkuId && <SimuladorContent skuId={drawerSkuId} />}
       </Drawer>
@@ -64,20 +56,36 @@ export default function ElasticidadPage() {
 // ─── Resumen Tab ─────────────────────────────────────────────
 
 function ResumenTab({ filters, onSkuClick }: { filters: string; onSkuClick: (skuId: string, row: ElasticidadSummaryRow) => void }) {
-  const { data: kpis, isLoading: kpisLoading } = useQuery({
+  const { data: kpis, isLoading: kpisLoading, isError: kpisError, refetch: refetchKpis } = useQuery({
     queryKey: ['elasticidad-kpis', filters],
     queryFn: () => api.get<ElasticidadKpis>(`/elasticidad/kpis?${filters}`).then(r => r.data),
   })
 
-  const { data: rows = [], isLoading: rowsLoading } = useQuery({
+  const { data: rows = [], isLoading: rowsLoading, isError: rowsError, refetch: refetchRows } = useQuery({
     queryKey: ['elasticidad-summary', filters],
     queryFn: () => api.get<ElasticidadSummaryRow[]>(`/elasticidad/summary?${filters}`).then(r => r.data),
   })
 
   if (kpisLoading || rowsLoading) {
     return (
-      <div className="flex justify-center py-20">
-        <div className="animate-spin rounded-full h-8 w-8 border-2 border-p-lime border-t-transparent" />
+      <div className="space-y-6">
+        <SkeletonKpiCards count={4} />
+        <div className="glass-panel overflow-x-auto">
+          <table className="data-table">
+            <tbody><SkeletonTable rows={8} columns={6} /></tbody>
+          </table>
+        </div>
+      </div>
+    )
+  }
+
+  if (kpisError || rowsError) {
+    return (
+      <div className="glass-panel">
+        <QueryErrorState
+          onRetry={() => { void refetchKpis(); void refetchRows() }}
+          message="No se pudo cargar el análisis de elasticidad."
+        />
       </div>
     )
   }
@@ -184,7 +192,7 @@ function ResumenTab({ filters, onSkuClick }: { filters: string; onSkuClick: (sku
 function SimuladorContent({ skuId }: { skuId: string }) {
   const [sliderValue, setSliderValue] = useState(0)
 
-  const { data: detail, isLoading } = useQuery({
+  const { data: detail, isLoading, isError, refetch } = useQuery({
     queryKey: ['elasticidad-sku', skuId],
     queryFn: () => api.get<SkuElasticidadDetail>(`/elasticidad/sku/${skuId}`).then(r => r.data),
     enabled: !!skuId,
@@ -194,10 +202,17 @@ function SimuladorContent({ skuId }: { skuId: string }) {
 
   if (isLoading) {
     return (
-      <div className="flex justify-center py-20">
-        <div className="animate-spin rounded-full h-8 w-8 border-2 border-p-lime border-t-transparent" />
+      <div className="space-y-4 p-4" aria-hidden="true">
+        <div className="animate-pulse bg-white/10 rounded-lg h-5 w-1/2" />
+        <div className="animate-pulse bg-white/10 rounded-lg h-28 w-full" />
+        <div className="animate-pulse bg-white/10 rounded-lg h-5 w-3/4" />
+        <div className="animate-pulse bg-white/10 rounded-lg h-40 w-full" />
       </div>
     )
+  }
+
+  if (isError) {
+    return <QueryErrorState onRetry={refetch} message="No se pudo cargar el detalle de elasticidad." />
   }
 
   if (!detail) {

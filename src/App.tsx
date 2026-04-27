@@ -22,7 +22,7 @@ function App() {
         <AuthProvider>
           <Routes>
             <Route path="/login" element={<LoginPage />} />
-            <Route element={<ProtectedRoute allowedRoles={['cliente_comercial', 'cliente_educacion']} />}>
+            <Route element={<ProtectedRoute allowedRoles={['cliente']} />}>
               <Route element={<ClientLayout />}>
                 <Route path="/" element={<EjecucionPage />} />
                 <Route path="/competencia" element={<CompetenciaPage />} />

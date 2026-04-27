@@ -5,6 +5,8 @@ import api from '../lib/api'
 import type { ListaSkuRow } from '../lib/types'
 import SearchInput from '../components/SearchInput'
 import { useTableSearch } from '../components/useTableSearch'
+import { SkeletonTable } from '../components/Skeleton'
+import QueryErrorState from '../components/QueryErrorState'
 
 const PAGE_SIZE = 50
 
@@ -43,7 +45,7 @@ export default function ListasPage() {
   const iva = canalesConfig?.iva ?? 0.19
   const canales = canalesConfig?.canales ?? []
 
-  const { data: skus = [], isLoading, dataUpdatedAt } = useQuery({
+  const { data: skus = [], isLoading, isError, refetch, dataUpdatedAt } = useQuery({
     queryKey: ['listas-skus', filters],
     queryFn: async () => {
       const r = await api.get<ListaSkuRow[]>(`/listas/skus?${filters}`)
@@ -157,10 +159,18 @@ export default function ListasPage() {
         </div>
       </div>
 
-      {/* Loading */}
+      {/* Loading / Error */}
       {isLoading ? (
-        <div className="flex justify-center py-20">
-          <div className="animate-spin rounded-full h-8 w-8 border-2 border-p-lime border-t-transparent" />
+        <div className="glass-panel overflow-x-auto">
+          <table className="data-table">
+            <tbody>
+              <SkeletonTable rows={8} columns={5} />
+            </tbody>
+          </table>
+        </div>
+      ) : isError ? (
+        <div className="glass-panel">
+          <QueryErrorState onRetry={refetch} message="No se pudo cargar la lista de precios." />
         </div>
       ) : (
         <>

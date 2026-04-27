@@ -8,6 +8,8 @@ import type { PortfolioRow, ValueMapData } from '../lib/types'
 import SearchInput from '../components/SearchInput'
 import { useTableSearch } from '../components/useTableSearch'
 import Drawer from '../components/Drawer'
+import { SkeletonTable } from '../components/Skeleton'
+import QueryErrorState from '../components/QueryErrorState'
 
 function useIsMobile() {
   const [isMobile, setIsMobile] = useState(() => typeof window !== 'undefined' && window.innerWidth < 1024)
@@ -90,7 +92,7 @@ export default function PricingPage() {
 
 function PortfolioTab({ filters, selectedSkuId, onSkuClick }: { filters: string; selectedSkuId: string | null; onSkuClick: (id: string | null) => void }) {
   const [filterRec, setFilterRec] = useState<string | null>(null)
-  const { data: rows = [], isLoading } = useQuery({
+  const { data: rows = [], isLoading, isError, refetch } = useQuery({
     queryKey: ['pricing-portfolio', filters],
     queryFn: () => api.get<PortfolioRow[]>(`/pricing/portfolio?${filters}`).then(r => r.data),
   })
@@ -99,8 +101,18 @@ function PortfolioTab({ filters, selectedSkuId, onSkuClick }: { filters: string;
 
   if (isLoading) {
     return (
-      <div className="flex justify-center py-20">
-        <div className="animate-spin rounded-full h-8 w-8 border-2 border-p-lime border-t-transparent" />
+      <div className="glass-panel overflow-x-auto">
+        <table className="data-table">
+          <tbody><SkeletonTable rows={10} columns={6} /></tbody>
+        </table>
+      </div>
+    )
+  }
+
+  if (isError) {
+    return (
+      <div className="glass-panel">
+        <QueryErrorState onRetry={refetch} message="No se pudo cargar el portafolio de precios." />
       </div>
     )
   }
@@ -178,11 +190,22 @@ function PortfolioTab({ filters, selectedSkuId, onSkuClick }: { filters: string;
             {filteredRows.map(row => (
               <tr
                 key={row.skuId}
+                role={row.tieneCompetidores ? 'button' : undefined}
+                tabIndex={row.tieneCompetidores ? 0 : undefined}
+                aria-pressed={row.tieneCompetidores ? selectedSkuId === row.skuId : undefined}
+                aria-label={row.tieneCompetidores ? `Ver Mapa de Valor de ${row.nombre}` : undefined}
                 onClick={() => {
                   if (!row.tieneCompetidores) return
                   onSkuClick(selectedSkuId === row.skuId ? null : row.skuId)
                 }}
-                className={`border-b border-p-border/50 transition-colors ${
+                onKeyDown={(e) => {
+                  if (!row.tieneCompetidores) return
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault()
+                    onSkuClick(selectedSkuId === row.skuId ? null : row.skuId)
+                  }
+                }}
+                className={`border-b border-p-border/50 transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-p-lime ${
                   row.tieneCompetidores
                     ? selectedSkuId === row.skuId
                       ? 'bg-p-lime/10 border-l-2 border-l-p-lime cursor-pointer'
@@ -230,7 +253,7 @@ function PortfolioTab({ filters, selectedSkuId, onSkuClick }: { filters: string;
 function ValueMapPanel({ skuId }: { skuId: string }) {
   const navigate = useNavigate()
 
-  const { data: mapData, isLoading } = useQuery({
+  const { data: mapData, isLoading, isError, refetch } = useQuery({
     queryKey: ['pricing-valuemap', skuId],
     queryFn: () => api.get<ValueMapData>(`/pricing/valuemap/${skuId}`).then(r => r.data),
     enabled: !!skuId,
@@ -238,8 +261,17 @@ function ValueMapPanel({ skuId }: { skuId: string }) {
 
   if (isLoading) {
     return (
-      <div className="flex justify-center py-20">
-        <div className="animate-spin rounded-full h-8 w-8 border-2 border-p-lime border-t-transparent" />
+      <div className="glass-panel p-4 space-y-3" aria-hidden="true">
+        <div className="animate-pulse bg-white/10 rounded-lg h-4 w-1/2" />
+        <div className="animate-pulse bg-white/10 rounded-lg h-52 w-full" />
+      </div>
+    )
+  }
+
+  if (isError) {
+    return (
+      <div className="glass-panel">
+        <QueryErrorState onRetry={refetch} message="No se pudo cargar el Mapa de Valor." />
       </div>
     )
   }
