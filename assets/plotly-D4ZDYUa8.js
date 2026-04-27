@@ -1,0 +1,1 @@
+import{r as e}from"./rolldown-runtime-Dw2cE7zH.js";import{n as t,t as n}from"./plotly-CrJ00TYl.js";import{t as r}from"./createLucideIcon-d03m8SU9.js";var i=r(`trending-up`,[[`path`,{d:`M16 7h6v6`,key:`box55l`}],[`path`,{d:`m22 7-8.5 8.5-5-5L2 17`,key:`1t1m79`}]]),a=e(t(),1),o=e(n(),1),s=(o.default.default??o.default)(a.default);export{i as n,s as t};
